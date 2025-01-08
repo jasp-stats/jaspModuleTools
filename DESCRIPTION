@@ -1,0 +1,23 @@
+Package: jaspModuleTools
+Type: Package
+Title: Helper Package for compiling, packaging and updating JASP modules
+Version: 0.1.0
+Author: JASP Team
+Maintainer: Rens Dofferhoff <r.m.j.dofferhoff@uva.nl>
+Description: Compiles, Packages and Updates JASP modules
+License: GPL2+
+Encoding: UTF-8
+Depends: 
+    R (>= 3.4)
+Imports:
+    jaspModuleBundleManager,
+    renv,
+    fs,
+    pkgdepends,
+    withr
+Remotes:
+    jasp-stats/jaspModuleBundleManager,
+RoxygenNote: 7.3.2
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
