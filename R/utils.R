@@ -57,7 +57,7 @@ processLockFile <- function(lockfile, pathToModule, installMode = "identicalToLo
 }
 
 createLocalRecord <- function(modulePkg, moduleInfo, cacheAble = TRUE, addJaspToVersion = TRUE) {
-  hash = rlang::hash(rlang::hash_file(fs::dir_ls(modulePkg, recurse = TRUE)))
+  hash = rlang::hash(rlang::hash_file(fs::dir_ls(modulePkg, type='file', recurse = TRUE)))
   record <- list(list(
     Package    = moduleInfo[["Package"]],
     Version    = if (addJaspToVersion) addLocalJaspToVersion(moduleInfo[["Version"]]) else moduleInfo[["Version"]],
@@ -81,5 +81,73 @@ addLocalJaspToVersion <- function(version) {
     return(paste0(version, suffix))
   return(version)
 }
+
+##################################################################################################
+
+
+
+################################## Cellar Stuff ##################################################
+
+getOS <- function() {
+  os <- Sys.info()[['sysname']]
+  if(os == 'Darwin')
+    os <- 'MacOS'
+  return(os)
+}
+
+getRemoteCellarURLs <- function(baseURLs, repoName) {
+  RVersion <- paste0('R-', paste(R.Version()$major, substring(R.Version()$minor, 1, 1), sep = '.'))
+  os <- getOS()
+  arch <- Sys.info()['machine']
+  createURL <- function(url) {
+    paste(url, repoName, RVersion, os, arch, sep='/')
+  }
+  sapply(baseURLs, createURL)
+
+}
+
+gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development', additionalRepoURLs = NULL) {
+  download <- function(file, repoURL, targetDir) {
+    out <- fs::path(targetDir, file)
+    req <- tryCatch({
+      curl::curl_fetch_disk(paste0(repoURL, '/', file), out)
+    }, error = function(e) { list(status_code=404) })
+    if(req$status_code != 200) {
+      fs::file_delete(out)
+      return(FALSE)
+    }
+    TRUE
+  }
+
+  #determine remote cellar urls
+  repos <- getRemoteCellarURLs(c('https://repo.jasp-stats.org/', 'http://127.0.0.1:8000/', additionalRepoURLs), repoName)
+
+  #read lockfile, extract pkg strings
+  depRecords <- renv::lockfile_read(lockfilePath)$Packages
+  deps <- lapply(depRecords, function(x) { paste0(x$Package, '_', x$Version, '.tar.gz') })
+
+  depsNeeded <- deps
+  gathered <- c(NULL)
+  for(repo in repos) {
+    if(length(depsNeeded) <= 0) break
+    res <- sapply(depsNeeded, download, repo, cellardir)
+    gathered <- c(gathered, depsNeeded[res])
+    depsNeeded <- depsNeeded[!res]
+  }
+  stringr::str_replace(depsNeeded, '.tar.gz', '') #return all the pkgs we could not gather
+}
+
+expandCellarIntoRenvCache <- function(cellardir) {
+  expandIntoCache <- function(archive) {
+    tmp <- fs::dir_create(tempdir(), 'cellarExpand', fs::path_file(archive))
+    on.exit(fs::dir_delete(tmp))
+    untar(archive, tar='internal', exdir=tmp)
+    cachePath <- renv:::renv_cache_path(fs::path(tmp, 'DESCRIPTION'))
+    fs::dir_copy(tmp, cachePath, overwrite = TRUE)
+  }
+  archives <- fs::dir_ls(cellardir)
+  sapply(archives, expandIntoCache)
+}
+
 
 ##################################################################################################
