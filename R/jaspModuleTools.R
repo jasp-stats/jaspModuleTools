@@ -11,10 +11,10 @@
 #' @param repoName which remote repo should be used? for expample 0.19.3 or development
 #' @param localCellar local cellar path to also include for development purposes
 #' @export
-compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundleAll=FALSE, buildforJaspVersion='development', useJASPRemoteCellar=TRUE, repoName='development', localCellar='', localizeJASPModules = 'localizeModuleOnly') {
+compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundleAll=TRUE, buildforJaspVersion='development', useJASPRemoteCellar=TRUE, repoName='development', localCellar='', localizeJASPModules = 'localizeModuleOnly') {
   if(missing(workdir)) {
     workdir <- fs::dir_create(tempdir(), fs::path_file(moduledir))
-    withr::defer(fs::dir_delete(workdir))
+    withr::defer(if(fs::dir_exists(workdir))fs::dir_delete(workdir))
   }
   workdir <- fs::path_abs(fs::dir_create(workdir))
   pkglib <- fs::dir_create(workdir, fs::path_file(moduledir))
@@ -55,7 +55,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
 
   #copy over the sandbox so we truly have all that is required in one place
   sandbox <- fs::dir_ls(renv:::renv_paths_sandbox(), type='symlink')
-  fs::link_copy(sandbox, fs::path(pkglib, fs::path_file(sandbox)), overwrite = FALSE)
+  #fs::dir_copy(sandbox, fs::path(pkglib, fs::path_file(sandbox)), overwrite = FALSE)
 
   renv:::renv_sandbox_deactivate()
 
