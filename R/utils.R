@@ -120,7 +120,7 @@ gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development'
   }
 
   #determine remote cellar urls
-  repos <- getRemoteCellarURLs(c('https://repo.jasp-stats.org/', 'http://127.0.0.1:8000/', additionalRepoURLs), repoName)
+  repos <- getRemoteCellarURLs(c('https://repo.jasp-stats.org/', additionalRepoURLs), repoName)
 
   #read lockfile, extract pkg strings
   depRecords <- renv::lockfile_read(lockfilePath)$Packages
