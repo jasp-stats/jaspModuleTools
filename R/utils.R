@@ -142,12 +142,20 @@ expandCellarIntoRenvCache <- function(cellardir) {
     tmp <- fs::dir_create(tempdir(), 'cellarExpand', fs::path_file(archive))
     on.exit(fs::dir_delete(tmp))
     untar(archive, tar='internal', exdir=tmp)
-    cachePath <- renv:::renv_cache_path(fs::path(tmp, 'DESCRIPTION'))
-    fs::dir_copy(tmp, cachePath, overwrite = TRUE)
+    if(fs::file_exists(fs::path(tmp, 'DESCRIPTION'))) { #L0 cellar archive
+      cachePath <- renv:::renv_cache_path(fs::path(tmp, 'DESCRIPTION'))
+      fs::dir_copy(tmp, cachePath, overwrite = TRUE)
+    }
+    else { #CRAN archive
+      subdir <- fs::dir_ls(tmp)[[1]]
+      if(fs::file_exists(fs::path(subdir, 'DESCRIPTION'))) {
+        cachePath <- renv:::renv_cache_path(fs::path(subdir, 'DESCRIPTION'))
+        fs::dir_copy(subdir, cachePath, overwrite = TRUE)
+      }
+    }
   }
   archives <- fs::dir_ls(cellardir)
   sapply(archives, expandIntoCache)
 }
-
 
 ##################################################################################################
