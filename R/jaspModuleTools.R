@@ -91,7 +91,8 @@ updateLockfile <- function(moduledir) {
   processedRecords <- c(lockedRecords, nonConflicting)
 
   #write the new records
-  fs::file_delete(lockfilePath)
+  if(fs::file_exists(lockfilePath))
+    fs::file_delete(lockfilePath)
   lockfile <- renv:::renv_lockfile_init(NULL)
   lockfile <- renv::record(processedRecords, lockfile = lockfile)
   renv::lockfile_write(lockfile, lockfilePath)
