@@ -138,9 +138,9 @@ gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development'
 }
 
 expandCellarIntoRenvCache <- function(cellardir) {
+  tmpExpandDir <- fs::dir_create(fs::path(tempdir(), 'cellarExpand'))
   expandIntoCache <- function(archive) {
-    tmp <- fs::dir_create(tempdir(), 'cellarExpand', fs::path_file(archive))
-    on.exit(fs::dir_delete(tmp))
+    tmp <- fs::dir_create(tmpExpandDir, fs::path_file(archive))
     untar(archive, tar='internal', exdir=tmp)
     if(fs::file_exists(fs::path(tmp, 'DESCRIPTION'))) { #L0 cellar archive
       cachePath <- renv:::renv_cache_path(fs::path(tmp, 'DESCRIPTION'))
@@ -156,6 +156,7 @@ expandCellarIntoRenvCache <- function(cellardir) {
   }
   archives <- fs::dir_ls(cellardir)
   sapply(archives, expandIntoCache)
+  fs::dir_delete(tmpExpandDir)
 }
 
 ##################################################################################################
