@@ -53,9 +53,11 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
     prompt   = FALSE
   )
 
-  #copy over the sandbox so we truly have all that is required in one place
-  sandbox <- fs::dir_ls(renv:::renv_paths_sandbox(), type='symlink')
-  #fs::dir_copy(sandbox, fs::path(pkglib, fs::path_file(sandbox)), overwrite = FALSE)
+  #copy over the missing pkgs from sandbox so we truly have all that is required in one place
+  allRequired <- names(renv::lockfile_read(file=lockfile)$Packages)
+  presentInlib <- fs::path_file(fs::dir_ls(pkglib))
+  missing <- fs::path(renv:::renv_paths_sandbox(), allRequired[!allRequired %in% presentInlib]) 
+  fs::dir_copy(missing, fs::path(pkglib, fs::path_file(missing)), overwrite = FALSE)
 
   renv:::renv_sandbox_deactivate()
 
