@@ -109,7 +109,7 @@ getRemoteCellarURLs <- function(baseURLs, repoName) {
 gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development', additionalRepoURLs = NULL) {
   download <- function(file, repoURL, targetDir) {
     out <- fs::path(targetDir, file)
-    if(!getOption(jaspRemoteCellarRedownload, default = TRUE) && fs::file_exists(out))
+    if(!getOption('jaspRemoteCellarRedownload', default = TRUE) && fs::file_exists(out))
        return(TRUE)
     req <- tryCatch({
       curl::curl_fetch_disk(paste0(repoURL, '/', file), out)
