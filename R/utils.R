@@ -123,10 +123,14 @@ gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development'
 
   #determine remote cellar urls
   repos <- getRemoteCellarURLs(c('https://repo.jasp-stats.org/', additionalRepoURLs), repoName)
-
+  
   #read lockfile, extract pkg strings
   depRecords <- renv::lockfile_read(lockfilePath)$Packages
-  deps <- lapply(depRecords, function(x) { paste0(x$Package, '_', x$Version, '.tar.gz') })
+  createDepString <- function(x) {
+    version <- if(is.null(x$RemoteSha)) x$Version else substr(x$RemoteSha, 1, 8)
+    paste0(x$Package, '_', version, '.tar.gz')
+  }
+  deps <- lapply(depRecords, createDepString)
 
   depsNeeded <- deps
   gathered <- c(NULL)
