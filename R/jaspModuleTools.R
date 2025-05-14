@@ -62,7 +62,6 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
   renv:::renv_sandbox_deactivate()
 
   if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest=c(jaspVersion=buildforJaspVersion), repoNames=c(repoName))
-  fs::dir_delete(pkglib)
 }
 
 
