@@ -92,6 +92,8 @@ getOS <- function() {
   os <- Sys.info()[['sysname']]
   if(os == 'Darwin')
     os <- 'MacOS'
+  if(Sys.getenv('FLATPAK_ID') != "")
+    os <- 'Flatpak'
   return(os)
 }
 
