@@ -135,12 +135,14 @@ gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development'
   deps <- lapply(depRecords, createDepString)
 
   depsNeeded <- deps
-  gathered <- c(NULL)
-  for(repo in repos) {
-    if(length(depsNeeded) <= 0) break
-    res <- sapply(depsNeeded, download, repo, cellardir)
-    gathered <- c(gathered, depsNeeded[res])
-    depsNeeded <- depsNeeded[!res]
+  if(getOS() != 'Linux') {
+    gathered <- c(NULL)
+    for(repo in repos) {
+      if(length(depsNeeded) <= 0) break
+      res <- sapply(depsNeeded, download, repo, cellardir)
+      gathered <- c(gathered, depsNeeded[res])
+      depsNeeded <- depsNeeded[!res]
+    }
   }
   stringr::str_replace(depsNeeded, '.tar.gz', '') #return all the pkgs we could not gather
 }
