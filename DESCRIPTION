@@ -8,13 +8,13 @@ Description: Compiles, Packages and Updates JASP modules
 License: GPL2+
 Encoding: UTF-8
 Depends: 
-    R (>= 3.4)
+    R (>= 3.4),
+    withr
 Imports:
     jaspModuleBundleManager,
     renv,
     fs,
-    pkgdepends,
-    withr
+    pkgdepends
 Remotes:
     jasp-stats/jaspModuleBundleManager,
 RoxygenNote: 7.3.2
