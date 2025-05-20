@@ -2,7 +2,7 @@
 
 
 getRecordsFromPkgdepends <- function(modulePkg) {
-  pd <- pkgdepends::new_pkg_download_proposal(modulePkg)
+  pd <- pkgdepends::new_pkg_download_proposal(paste0('./', modulePkg))
   pd$resolve()
   dat <- pd$get_resolution()
 
