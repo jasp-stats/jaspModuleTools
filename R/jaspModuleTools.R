@@ -28,6 +28,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
 
   #handle cellar
   cellardir <- fs::dir_create(workdir, 'cellar')
+  notGathered <- c()
   #Sys.setenv(RENV_PATHS_CELLAR = cellardir) # for now we sadly expand manually because renv is vey inconsistent when using binary in cellar
   if(useJASPRemoteCellar) notGathered <- gatherRemoteCellar(lockfile, cellardir, repoName=repoName)
   if(fs::dir_exists(fs::path(localCellar))) fs::dir_copy(localCellar, cellardir, overwrite = TRUE)
