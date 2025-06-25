@@ -72,7 +72,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
 #' @param moduledir Path to the jaspModule root folder
 #' @usage jaspModuleTools::updateLockfile('~/jaspTTest/')
 #' @export
-updateLockfile <- function(moduledir) {
+updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE) {
   #get current records and extract the locked record
   lockfilePath <- fs::path(moduledir, 'renv.lock')
   currentRecords <- NULL
@@ -93,6 +93,15 @@ updateLockfile <- function(moduledir) {
   nonConflicting <- Filter(noConflicts, newRecords)
   processedRecords <- c(lockedRecords, nonConflicting)
 
+  if(jaspModuleDependenciesOnly) {
+    isJASPRecord <- function(pkg) { grepl("jasp", pkg$Package) }
+    notJASPRecord <- function(pkg) { !isJASPRecord(pkg) }
+    newjaspRecords <- Filter(isJASPRecord, newRecords)
+    print(newjaspRecords)
+    oldRecords <- Filter(notJASPRecord, currentRecords$Packages)
+    processedRecords <- c(oldRecords, newjaspRecords)
+  }
+
   #write the new records
   if(fs::file_exists(lockfilePath))
     fs::file_delete(lockfilePath)
@@ -101,5 +110,3 @@ updateLockfile <- function(moduledir) {
   renv::lockfile_write(lockfile, lockfilePath)
   sprintf('renv lockfile written for: %s', moduledir)
 }
-
-
