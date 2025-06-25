@@ -150,6 +150,10 @@ gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development'
 expandCellarIntoRenvCache <- function(cellardir) {
   tmpExpandDir <- fs::dir_create(fs::path(cellardir, '..', 'cellarExpand'))
   expandIntoCache <- function(archive) {
+    split <- strsplit(fs::path_file(archive), '_')[[1]]
+    cache <- renv:::renv_paths_cache(split[1] , sub('.tar.gz', '', split[2]))
+    if(!getOption('jaspRemoteCellarRedownload', default = TRUE) && fs::dir_exists(cache)) return(TRUE)
+    
     tmp <- fs::dir_create(tmpExpandDir, fs::path_file(archive))
     untar(archive, tar='internal', exdir=tmp)
     if(fs::file_exists(fs::path(tmp, 'DESCRIPTION'))) { #L0 cellar archive
