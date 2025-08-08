@@ -17,6 +17,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
     withr::defer(if(fs::dir_exists(workdir))fs::dir_delete(workdir))
   }
   workdir <- fs::path_abs(fs::dir_create(workdir))
+  resultdir <- fs::path_abs(fs::dir_create(resultdir))
   pkglib <- fs::dir_create(workdir, fs::path_file(moduledir))
   lockfile <- processLockFile(file.path(moduledir, 'renv.lock'), moduledir, localizeJASPModules)
 
@@ -111,4 +112,5 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE) {
   renv::lockfile_write(lockfile, lockfilePath)
   sprintf('renv lockfile written for: %s', moduledir)
 }
+
 
