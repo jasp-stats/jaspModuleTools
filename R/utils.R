@@ -111,7 +111,7 @@ getRemoteCellarURLs <- function(baseURLs, repoName) {
 gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development', additionalRepoURLs = NULL) {
   download <- function(file, repoURL, targetDir) {
     out <- fs::path(targetDir, file)
-    if(!getOption('jaspRemoteCellarRedownload', default = TRUE) && fs::file_exists(out))
+    if(!getOption('jaspRemoteCellarRedownload', default = FALSE) && fs::file_exists(out))
        return(TRUE)
     req <- tryCatch({
       curl::curl_fetch_disk(paste0(repoURL, '/', file), out)
@@ -152,7 +152,7 @@ expandCellarIntoRenvCache <- function(cellardir) {
   expandIntoCache <- function(archive) {
     split <- strsplit(fs::path_file(archive), '_')[[1]]
     cache <- renv:::renv_paths_cache(split[1] , sub('.tar.gz', '', split[2]))
-    if(!getOption('jaspRemoteCellarRedownload', default = TRUE) && fs::dir_exists(cache)) return(TRUE)
+    if(!getOption('jaspRemoteCellarRedownload', default = FALSE) && fs::dir_exists(cache)) return(TRUE)
     
     tmp <- fs::dir_create(tmpExpandDir, fs::path_file(archive))
     untar(archive, tar='internal', exdir=tmp)
@@ -174,3 +174,4 @@ expandCellarIntoRenvCache <- function(cellardir) {
 }
 
 ##################################################################################################
+
