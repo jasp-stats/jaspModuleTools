@@ -2,9 +2,11 @@
 
 
 getRecordsFromPkgdepends <- function(modulePkg) {
-  pd <- pkgdepends::new_pkg_download_proposal(paste0('./', modulePkg))
-  pd$resolve()
-  dat <- pd$get_resolution()
+  pd <- pkgdepends::new_pkg_deps(paste0('./', modulePkg))
+  pd$solve()
+  res <- pd$get_solution()
+  if(res$status != "OK")  stop("Could not resolve the dependencies")
+  dat <- res$data
 
   # this could be expanded but we currently do not support other repos anyway...
   fromRepository <- which(dat$type == "standard")
@@ -174,4 +176,5 @@ expandCellarIntoRenvCache <- function(cellardir) {
 }
 
 ##################################################################################################
+
 
