@@ -177,4 +177,58 @@ expandCellarIntoRenvCache <- function(cellardir) {
 
 ##################################################################################################
 
+### MacOS tragedy
+
+framework_resources <- "@executable_path/../Frameworks/R.framework/Versions/Current/Resources/"
+linkPrefixMapToJASP <- c(
+  "/Library/Frameworks/R.framework/Versions/.*/Resources/lib"      = paste0(framework_resources, "lib"),
+  "/usr/local/lib/libjags"                                         = paste0(framework_resources, "opt/jags/lib/libjags"),
+  "/usr/local/lib/libjrmath"                                       = paste0(framework_resources, "opt/jags/lib/libjrmath"),
+  "/usr/local/lib"                                                 = paste0(framework_resources, "opt/local/lib"),
+  "/opt/gfortran/lib/gcc/x86_64-apple-darwin20.0/14.2.0"           = paste0(framework_resources, "opt/R/x86_64/gfortran/lib"),
+  "/opt/gfortran/lib/gcc/aarch64-apple-darwin20.0/14.2.0"          = paste0(framework_resources, "opt/R/arm64/gfortran/lib"),
+  "/opt/X11/lib/"                                                  = paste0(framework_resources, "opt/X11/lib")
+)
+linkPrefixMapToJASP <- linkPrefixMapToJASP[order(nchar(names(linkPrefixMapToJASP)), decreasing = TRUE)]
+
+generate_link_fix_command <- function(lib, map) {
+  otool <- system2("otool", c("-L", lib), stdout=TRUE, stderr=TRUE)[-1]
+  links <- sapply(otool, function(z) {substring(z,2)})
+  links <- sub(" \\(compatibility.*", "", links)
+
+  subPrefixes <- function(link) {
+    change <- ""
+    for(prefix in names(map)) {
+      newLink <- sub(prefix, map[prefix], link)
+      if(newLink != link) {
+        change <- paste0("-change ", link, " ", sub(prefix, map[prefix], link))
+        break
+      }
+    }
+    change
+  }
+  changes <- sapply(links, subPrefixes)
+  if(any(changes != ""))
+    paste("install_name_tool", paste(changes, collapse = " "), lib)
+  else
+    ""
+}
+
+fix_mac_linking <- function(dir) {
+  fix_linking <- function(lib) {
+    linkFixCommand <- generate_link_fix_command(lib, linkPrefixMapToJASP)
+    if(linkFixCommand != "") {
+      print(linkFixCommand)
+      system(linkFixCommand)
+    }
+    TRUE
+  }
+  libs <- c(fs::dir_ls(dir, recurse = TRUE, type="file", glob  = "*.so" ), fs::dir_ls(dir, recurse = TRUE, type="file", glob = "*.dylib" ))
+  libs <- Filter(function(x) !grepl(".dSYM",x), libs)
+  print(libs)
+  sapply(libs, fix_linking)
+}
+
+
+
 
