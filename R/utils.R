@@ -3,9 +3,10 @@
 
 getRecordsFromPkgdepends <- function(modulePkg) {
   pd <- pkgdepends::new_pkg_deps(paste0('./', modulePkg))
+  pd$set_solve_policy(policy = "upgrade")
   pd$solve()
+  pd$stop_for_solution_error()
   res <- pd$get_solution()
-  if(res$status != "OK")  stop("Could not resolve the dependencies")
   dat <- res$data
 
   # this could be expanded but we currently do not support other repos anyway...
@@ -228,6 +229,7 @@ fix_mac_linking <- function(dir) {
   print(libs)
   sapply(libs, fix_linking)
 }
+
 
 
 
