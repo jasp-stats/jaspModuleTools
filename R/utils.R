@@ -182,13 +182,13 @@ expandCellarIntoRenvCache <- function(cellardir) {
 
 framework_resources <- "@executable_path/../Frameworks/R.framework/Versions/Current/Resources/"
 linkPrefixMapToJASP <- c(
-  "/Library/Frameworks/R.framework/Versions/.*/Resources/lib"      = paste0(framework_resources, "lib"),
-  "/usr/local/lib/libjags"                                         = paste0(framework_resources, "opt/jags/lib/libjags"),
-  "/usr/local/lib/libjrmath"                                       = paste0(framework_resources, "opt/jags/lib/libjrmath"),
-  "/usr/local/lib"                                                 = paste0(framework_resources, "opt/local/lib"),
-  "/opt/gfortran/lib/gcc/x86_64-apple-darwin20.0/14.2.0"           = paste0(framework_resources, "opt/R/x86_64/gfortran/lib"),
-  "/opt/gfortran/lib/gcc/aarch64-apple-darwin20.0/14.2.0"          = paste0(framework_resources, "opt/R/arm64/gfortran/lib"),
-  "/opt/X11/lib/"                                                  = paste0(framework_resources, "opt/X11/lib")
+  "^/Library/Frameworks/R.framework/Versions/.*/Resources/lib"      = paste0(framework_resources, "lib"),
+  "^/usr/local/lib/libjags"                                         = paste0(framework_resources, "opt/jags/lib/libjags"),
+  "^/usr/local/lib/libjrmath"                                       = paste0(framework_resources, "opt/jags/lib/libjrmath"),
+  "^/usr/local/lib"                                                 = paste0(framework_resources, "opt/local/lib"),
+  "^/opt/gfortran/lib/gcc/x86_64-apple-darwin20.0/14.2.0"           = paste0(framework_resources, "opt/R/x86_64/gfortran/lib"),
+  "^/opt/gfortran/lib/gcc/aarch64-apple-darwin20.0/14.2.0"          = paste0(framework_resources, "opt/R/arm64/gfortran/lib"),
+  "^/opt/X11/lib/"                                                  = paste0(framework_resources, "opt/X11/lib")
 )
 linkPrefixMapToJASP <- linkPrefixMapToJASP[order(nchar(names(linkPrefixMapToJASP)), decreasing = TRUE)]
 
@@ -234,4 +234,5 @@ fix_mac_linking <- function(dir) {
   sapply(libs, fix_linking)
   TRUE
 }
+
 
