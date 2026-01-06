@@ -215,6 +215,10 @@ generate_link_fix_command <- function(lib, map) {
     ""
 }
 
+generate_codesign_adhoc_command <- function(path) {
+  paste0("codesign --force --deep --verbose=4 --timestamp --sign - \"", path, "\"");
+}
+
 fix_mac_linking <- function(dir) {
   fix_linking <- function(lib) {
     linkFixCommand <- generate_link_fix_command(lib, linkPrefixMapToJASP)
@@ -222,15 +226,12 @@ fix_mac_linking <- function(dir) {
       print(linkFixCommand)
       system(linkFixCommand)
     }
-    TRUE
+    system(generate_codesign_adhoc_command(lib))
   }
+
   libs <- c(fs::dir_ls(dir, recurse = TRUE, type="file", glob  = "*.so" ), fs::dir_ls(dir, recurse = TRUE, type="file", glob = "*.dylib" ))
   libs <- Filter(function(x) !grepl(".dSYM",x), libs)
-  print(libs)
   sapply(libs, fix_linking)
+  TRUE
 }
-
-
-
-
 
