@@ -63,9 +63,9 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
 
   renv:::renv_sandbox_deactivate()
 
-  #if(Sys.info()["sysname"] == "Darwin") {
-  #  fix_mac_linking(pkglib)
-  #}
+  if(Sys.info()["sysname"] == "Darwin") {
+    fix_mac_linking(pkglib)
+  }
 
   if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest=c(jaspVersion=buildforJaspVersion), repoNames=c(repoName))
   unlink(pkglib, recursive = TRUE)
@@ -116,6 +116,7 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE) {
   renv::lockfile_write(lockfile, lockfilePath)
   sprintf('renv lockfile written for: %s', moduledir)
 }
+
 
 
 
