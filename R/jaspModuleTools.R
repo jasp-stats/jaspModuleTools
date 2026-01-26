@@ -103,7 +103,6 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE) {
     isJASPRecord <- function(pkg) { grepl("jasp", pkg$Package) }
     notJASPRecord <- function(pkg) { !isJASPRecord(pkg) }
     newjaspRecords <- Filter(isJASPRecord, newRecords)
-    print(newjaspRecords)
     oldRecords <- Filter(notJASPRecord, currentRecords$Packages)
     processedRecords <- c(oldRecords, newjaspRecords)
   }
@@ -116,6 +115,7 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE) {
   renv::lockfile_write(lockfile, lockfilePath)
   sprintf('renv lockfile written for: %s', moduledir)
 }
+
 
 
 
