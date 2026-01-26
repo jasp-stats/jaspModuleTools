@@ -1,4 +1,54 @@
 #' Compiles given jaspModule and (optionally) creates a JaspModuleBundle
+#' Sets up recommended jasp development environment
+#'
+#' @description Sets up recommended jasp development environment
+#' @export
+start_jasp_development <- function() {
+  usethis::use_build_ignore("jasp_dev_work_dir")
+  workdir <- fs::dir_create(fs::path("./jasp_dev_work_dir"))
+
+  #set everything relative to the working directory no surprises
+  Sys.setenv(RENV_PATHS_ROOT     = fs::dir_create(workdir, 'renv-root'))
+  Sys.setenv(RENV_PATHS_SANDBOX  = fs::dir_create(workdir, 'renv_sandbox'))
+  Sys.setenv(RENV_PATHS_CACHE    = fs::dir_create(workdir, 'renv-cache'))
+  Sys.setenv(RENV_PATHS_LIBRARY    = fs::dir_create(workdir, 'pkg_library'))
+  library("renv")
+
+  sandboxPaths <- renv:::renv_sandbox_activate()
+  renv::sandbox$unlock()
+
+
+}
+
+
+#' Collects pkgs in one place and processes them so jasp can load it
+#'
+#'
+#' @description Collects pkgs in one place and processes them so jasp can load it
+#' @export
+prepare_for_jasp_loading <- function() {
+  usethis::use_build_ignore("jasp_dev_work_dir")
+  workdir <- fs::dir_create(fs::path("./jasp_dev_work_dir"))
+  pkg_lib <- fs::path(workdir, "pkg_lib")
+
+  unlink(pkg_lib)
+  fs::dir_create(pkg_lib)
+  fs::dir_copy(.libPaths(), pkg_lib, overwrite = TRUE)
+
+  if(Sys.info()["sysname"] == "Darwin") {
+    fix_mac_linking(pkg_lib)
+  }
+
+  cat("Please set the following file Path in JASP: \n", pkg_lib)
+}
+
+
+#stop_jasp_development <- function() {
+#  renv:::renv_sandbox_deactivate()
+#  TRUE
+#}
+
+#' Compiles given jaspModule and (optionally) creates a JaspModuleBundle
 #'
 #' @description Compiles given jaspModule and (optionally) creates a JaspModuleBundle. Will gather binaries from the JASP Remote Cellar Repo.
 #' @param moduledir Path to the jaspModule root folder
@@ -58,7 +108,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
   #copy over the missing pkgs from sandbox so we truly have all that is required in one place
   allRequired <- names(renv::lockfile_read(file=lockfile)$Packages)
   presentInlib <- fs::path_file(fs::dir_ls(pkglib))
-  missing <- fs::path(renv:::renv_paths_sandbox(), allRequired[!allRequired %in% presentInlib]) 
+  missing <- fs::path(renv:::renv_paths_sandbox(), allRequired[!allRequired %in% presentInlib])
   fs::dir_copy(missing, fs::path(pkglib, fs::path_file(missing)), overwrite = FALSE)
 
   renv:::renv_sandbox_deactivate()
@@ -70,7 +120,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
   if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest=c(includeInManifest, jaspVersion=buildforJaspVersion), repoNames=c(repoName))
   if(deleteLibrary) unlink(pkglib, recursive = TRUE)
 }
-                 
+
 #' Updates lockfile using pkgdepends
 #'
 #' @description Updates the lockfile of a given jaspModule using pkgdepens

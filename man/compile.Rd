@@ -4,7 +4,20 @@
 \alias{compile}
 \title{Compiles given jaspModule and (optionally) creates a JaspModuleBundle}
 \usage{
-jaspModuleTools::updateLockfile('~/jaspTTest/')
+compile(
+  moduledir,
+  workdir,
+  resultdir = "./",
+  createBundle = TRUE,
+  bundleAll = TRUE,
+  buildforJaspVersion = "development",
+  useJASPRemoteCellar = TRUE,
+  repoName = "development",
+  localCellar = "",
+  localizeJASPModules = "localizeModuleOnly",
+  includeInManifest = c(),
+  deleteLibrary = FALSE
+)
 }
 \arguments{
 \item{moduledir}{Path to the jaspModule root folder}
