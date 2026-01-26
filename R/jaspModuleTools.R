@@ -11,7 +11,7 @@
 #' @param repoName which remote repo should be used? for expample 0.19.3 or development
 #' @param localCellar local cellar path to also include for development purposes
 #' @export
-compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundleAll=TRUE, buildforJaspVersion='development', useJASPRemoteCellar=TRUE, repoName='development', localCellar='', localizeJASPModules = 'localizeModuleOnly', includeInManifest = c()) {
+compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundleAll=TRUE, buildforJaspVersion='development', useJASPRemoteCellar=TRUE, repoName='development', localCellar='', localizeJASPModules = 'localizeModuleOnly', includeInManifest = c(), deleteLibrary= FALSE) {
   if(missing(workdir)) {
     workdir <- fs::dir_create(tempdir(), fs::path_file(moduledir))
     withr::defer(if(fs::dir_exists(workdir))fs::dir_delete(workdir))
@@ -68,10 +68,9 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
   }
 
   if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest=c(includeInManifest, jaspVersion=buildforJaspVersion), repoNames=c(repoName))
-  #unlink(pkglib, recursive = TRUE)
+  if(deleteLibrary) unlink(pkglib, recursive = TRUE)
 }
-
-
+                 
 #' Updates lockfile using pkgdepends
 #'
 #' @description Updates the lockfile of a given jaspModule using pkgdepens
@@ -115,6 +114,7 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE) {
   renv::lockfile_write(lockfile, lockfilePath)
   sprintf('renv lockfile written for: %s', moduledir)
 }
+
 
 
 
