@@ -11,7 +11,7 @@ start_jasp_development <- function() {
   Sys.setenv(RENV_PATHS_ROOT     = fs::dir_create(workdir, 'renv-root'))
   Sys.setenv(RENV_PATHS_SANDBOX  = fs::dir_create(workdir, 'renv_sandbox'))
   Sys.setenv(RENV_PATHS_CACHE    = fs::dir_create(workdir, 'renv-cache'))
-  Sys.setenv(RENV_PATHS_LIBRARY    = fs::dir_create(workdir, 'pkg_library'))
+  #Sys.setenv(RENV_PATHS_LIBRARY    = fs::dir_create(workdir, 'pkg_library'))
   library("renv")
 
   sandboxPaths <- renv:::renv_sandbox_activate()
@@ -28,20 +28,27 @@ start_jasp_development <- function() {
 #' @export
 prepare_for_jasp_loading <- function() {
   usethis::use_build_ignore("jasp_dev_work_dir")
-  workdir <- fs::dir_create(fs::path("./jasp_dev_work_dir"))
-  pkg_lib <- fs::path(workdir, "pkg_lib")
+  workdir <- fs::dir_create(fs::path("jasp_dev_work_dir"))
 
-  unlink(pkg_lib)
-  fs::dir_create(pkg_lib)
-  fs::dir_copy(.libPaths(), pkg_lib, overwrite = TRUE)
+  #need to do this because Rstudio files pain makes file operations so extremely slow
+  #so we need to do this out of sight
+  temp_staging <- fs::path(tempdir(), "pkg_lib")
+  unlink(temp_staging, recursive = TRUE)
+  fs::dir_create(temp_staging)
+  withr::defer(unlink(temp_staging, recursive = TRUE))
+
+  pkgs <- fs::dir_ls(.libPaths(), recurse = FALSE)
+  fs::dir_copy(pkgs, fs::path(temp_staging, fs::path_file(pkgs)), overwrite = TRUE)
 
   if(Sys.info()["sysname"] == "Darwin") {
-    fix_mac_linking(pkg_lib)
+    fix_mac_linking(temp_staging)
   }
 
-  cat("Please set the following file Path in JASP: \n", pkg_lib)
+  pkg_lib <-  fs::path_abs(fs::path(workdir, fs::path_file(temp_staging)))
+  unlink(pkg_lib, recursive = TRUE)
+  fs::file_move(temp_staging, workdir) # using file move is critical to speed this up in Rstudio
+  cat("Please set the following file Path in JASP: \n",  pkg_lib)
 }
-
 
 #stop_jasp_development <- function() {
 #  renv:::renv_sandbox_deactivate()
