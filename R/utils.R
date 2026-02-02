@@ -235,4 +235,28 @@ fix_mac_linking <- function(dir) {
   TRUE
 }
 
+##################################################################################################
 
+
+super_copy <- function(source_dirs, dest_dir) {
+  dest_dir <- normalizePath(dest_dir, winslash = "\\", mustWork = FALSE)
+  if (!dir.exists(dest_dir)) dir.create(dest_dir, recursive = TRUE)
+  
+  is_windows <- .Platform$OS.type == "windows"
+  if (is_windows) {
+    if (Sys.which("robocopy") == "") stop("robocopy not found.")
+    for (src in source_dirs) {
+      src_abs <- normalizePath(src, winslash = "\\", mustWork = TRUE)
+      cmd <- sprintf('robocopy %s %s /E /MT:16 /R:0 /W:0 /NFL /NDL', shQuote(src_abs), shQuote(dest_dir))
+      suppressWarnings(system(cmd, show.output.on.console = FALSE))
+    }
+  } 
+  else {
+    if (Sys.which("rsync") == "") stop("rsync not found. Please install it")
+    src_abs <- normalizePath(source_dirs, mustWork = TRUE)
+    src_formatted <- paste0(src_abs, ifelse(endsWith(src_abs, "/"), "", "/"))
+    src_string <- paste(shQuote(src_formatted), collapse = " ")
+    cmd <- sprintf("rsync -aq %s %s", src_string, shQuote(dest_dir))
+    system(cmd)
+  }
+}
