@@ -27,7 +27,7 @@ start_jasp_development <- function() {
 #' @description Collects pkgs in one place and processes them so jasp can load it
 #' @export
 prepare_for_jasp_loading <- function() {
-  pkg_lib <- fs::path("~/jasp_load_dir/", fs::path_file(fs::path_abs("./")))
+  pkg_lib <- fs::path_expand(fs::path("~/jasp_load_dir/", fs::path_file(fs::path_abs("./"))))
   unlink(pkg_lib, recursive = TRUE)
   fs::dir_create(pkg_lib)
 
