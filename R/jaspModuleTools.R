@@ -30,16 +30,13 @@ prepare_for_jasp_loading <- function() {
   pkg_lib <- fs::path_expand(fs::path("~/jasp_load_dir/", fs::path_file(fs::path_abs("./"))))
   unlink(pkg_lib, recursive = TRUE)
   fs::dir_create(pkg_lib)
-
-  pkgs <- fs::dir_ls(.libPaths(), recurse = FALSE)
-  fs::dir_copy(pkgs, fs::path(pkg_lib, fs::path_file(pkgs)), overwrite = TRUE)
+  super_copy(.libPaths(), pkg_lib)
 
   if(Sys.info()["sysname"] == "Darwin") {
     fix_mac_linking(pkg_lib)
   }
   cat("Please set the following file Path in JASP: \n",  pkg_lib)
 }
-
 
 #stop_jasp_development <- function() {
 #  renv:::renv_sandbox_deactivate()
