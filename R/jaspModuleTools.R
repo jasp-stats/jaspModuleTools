@@ -35,7 +35,7 @@ prepare_for_jasp_loading <- function() {
   fs::dir_copy(pkgs, fs::path(pkg_lib, fs::path_file(pkgs)), overwrite = TRUE)
 
   if(Sys.info()["sysname"] == "Darwin") {
-    fix_mac_linking(temp_staging)
+    fix_mac_linking(pkg_lib)
   }
   cat("Please set the following file Path in JASP: \n",  pkg_lib)
 }
