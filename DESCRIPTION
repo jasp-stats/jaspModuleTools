@@ -15,7 +15,8 @@ Imports:
     renv,
     fs,
     pkgdepends,
-    usethis
+    usethis,
+    withr
 Remotes:
     jasp-stats/jaspModuleBundleManager,
 RoxygenNote: 7.3.3
