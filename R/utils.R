@@ -247,7 +247,7 @@ super_copy <- function(source_dirs, dest_dir) {
     if (Sys.which("robocopy") == "") stop("robocopy not found.")
     for (src in source_dirs) {
       src_abs <- normalizePath(src, winslash = "\\", mustWork = TRUE)
-      cmd <- sprintf('robocopy %s %s /E /MT:16 /R:0 /W:0 /NFL /NDL', shQuote(src_abs), shQuote(dest_dir))
+      cmd <- sprintf('robocopy %s %s /E /MT:16 /R:0 /W:0 /NFL /NDL /COPY:DT /A-:RHS', shQuote(src_abs), shQuote(dest_dir))
       suppressWarnings(system(cmd, show.output.on.console = FALSE))
     }
   } 
@@ -256,8 +256,9 @@ super_copy <- function(source_dirs, dest_dir) {
     src_abs <- normalizePath(source_dirs, mustWork = TRUE)
     src_formatted <- paste0(src_abs, ifelse(endsWith(src_abs, "/"), "", "/"))
     src_string <- paste(shQuote(src_formatted), collapse = " ")
-    cmd <- sprintf("rsync -aqL %s %s", src_string, shQuote(dest_dir))
+    cmd <- sprintf("rsync -rltL --chmod=Du+rwx %s %s", src_string, shQuote(dest_dir))
     system(cmd)
   }
 }
+
 
