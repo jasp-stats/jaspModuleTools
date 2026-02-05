@@ -256,6 +256,7 @@ super_copy <- function(source_dirs, dest_dir) {
     src_abs <- normalizePath(source_dirs, mustWork = TRUE)
     src_formatted <- paste0(src_abs, ifelse(endsWith(src_abs, "/"), "", "/"))
     src_string <- paste(shQuote(src_formatted), collapse = " ")
+    print(paste0("Copying '", src_string, "' to '", dest_dir, "'"))
     cmd <- sprintf("rsync -rltL --chmod=Du+rwx %s %s", src_string, shQuote(dest_dir))
     system(cmd)
   }

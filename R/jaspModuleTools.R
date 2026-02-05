@@ -30,7 +30,7 @@ prepare_for_jasp_loading <- function() {
   pkg_lib <- fs::path_expand(fs::path("~/jasp_load_dir/", fs::path_file(fs::path_abs("./"))))
   unlink(pkg_lib, recursive = TRUE)
   fs::dir_create(pkg_lib)
-  super_copy(.libPaths(), pkg_lib)
+  super_copy(rev(.libPaths()), pkg_lib)
 
   if(Sys.info()["sysname"] == "Darwin") {
     fix_mac_linking(pkg_lib)
