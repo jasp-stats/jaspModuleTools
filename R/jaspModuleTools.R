@@ -27,7 +27,9 @@ start_jasp_development <- function() {
 #' @description Collects pkgs in one place and processes them so jasp can load it
 #' @export
 prepare_for_jasp_loading <- function() {
+  renv_active <- !is.null(renv::project())
   pkg_lib <- fs::path_expand(fs::path("~/jasp_load_dir/", fs::path_file(fs::path_abs("./"))))
+  if(!renv_active) unlink(pkg_lib, recursive = TRUE)
   fs::dir_create(pkg_lib)
 
   #read old timestamps
