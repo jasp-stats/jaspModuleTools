@@ -28,14 +28,36 @@ start_jasp_development <- function() {
 #' @export
 prepare_for_jasp_loading <- function() {
   pkg_lib <- fs::path_expand(fs::path("~/jasp_load_dir/", fs::path_file(fs::path_abs("./"))))
-  unlink(pkg_lib, recursive = TRUE)
   fs::dir_create(pkg_lib)
-  super_copy(rev(.libPaths()), pkg_lib)
+
+  #read old timestamps
+  dir_dates_old <- c()
+  if(fs::file_exists(fs::path(pkg_lib, "READY"))) {
+    tmp <- readRDS(fs::path(pkg_lib, "READY"))
+    if(!is.null(tmp)) dir_dates_old <- tmp
+  }
+
+  #gather new timestamps
+  dir_dates_new <- c()
+  for(lib in .libPaths()) {
+    all_info <- fs::dir_info(path = lib)
+    dir_dates_new <- c(dir_dates_new, setNames(all_info$modification_time, all_info$path))
+  }
+  added_paths <- setdiff(names(dir_dates_new), names(dir_dates_old))
+  common_paths <- intersect(names(dir_dates_new), names(dir_dates_old))
+  modified_paths <- common_paths[dir_dates_new[common_paths] != dir_dates_old[common_paths]]
+  target_paths <- c(added_paths, modified_paths)
+
+  copy_target_paths <- fs::path(pkg_lib, rev(basename(target_paths)))
+  fs::dir_copy(rev(target_paths), copy_target_paths, overwrite = TRUE)
 
   if(Sys.info()["sysname"] == "Darwin") {
-    fix_mac_linking(pkg_lib)
+    filter <- function(lib) {
+      any(fs::path_has_parent(lib, copy_target_paths))
+    }
+    fix_mac_linking(pkg_lib, filter)
   }
-  fs::file_create(pkg_lib, "READY")
+  saveRDS(dir_dates_new, file=fs::path(pkg_lib, "READY"))
   cat("Please set the following file Path in JASP: \n",  pkg_lib)
 }
 
