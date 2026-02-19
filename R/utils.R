@@ -128,7 +128,7 @@ gatherRemoteCellar <- function(lockfilePath, cellardir, repoName = 'development'
 
   #determine remote cellar urls
   repos <- getRemoteCellarURLs(c('https://repo.jasp-stats.org/', additionalRepoURLs), repoName)
-  
+
   #read lockfile, extract pkg strings
   depRecords <- renv::lockfile_read(lockfilePath)$Packages
   createDepString <- function(x) {
@@ -156,7 +156,7 @@ expandCellarIntoRenvCache <- function(cellardir) {
     split <- strsplit(fs::path_file(archive), '_')[[1]]
     cache <- renv:::renv_paths_cache(split[1] , sub('.tar.gz', '', split[2]))
     if(!getOption('jaspRemoteCellarRedownload', default = FALSE) && fs::dir_exists(cache)) return(TRUE)
-    
+
     tmp <- fs::dir_create(tmpExpandDir, fs::path_file(archive))
     untar(archive, tar='internal', exdir=tmp)
     if(fs::file_exists(fs::path(tmp, 'DESCRIPTION'))) { #L0 cellar archive
@@ -219,7 +219,7 @@ generate_codesign_adhoc_command <- function(path) {
   paste0("codesign --force --deep --verbose=4 --timestamp --sign - \"", path, "\"");
 }
 
-fix_mac_linking <- function(dir) {
+fix_mac_linking <- function(dir, filter = function(x) {TRUE}) {
   fix_linking <- function(lib) {
     linkFixCommand <- generate_link_fix_command(lib, linkPrefixMapToJASP)
     if(linkFixCommand != "") {
@@ -231,17 +231,18 @@ fix_mac_linking <- function(dir) {
 
   libs <- c(fs::dir_ls(dir, recurse = TRUE, type="file", glob  = "*.so" ), fs::dir_ls(dir, recurse = TRUE, type="file", glob = "*.dylib" ))
   libs <- Filter(function(x) !grepl(".dSYM",x), libs)
+  libs <- Filter(filter, libs)
   sapply(libs, fix_linking)
   TRUE
 }
 
 ##################################################################################################
 
-
+#unused for now
 super_copy <- function(source_dirs, dest_dir) {
   dest_dir <- normalizePath(dest_dir, winslash = "\\", mustWork = FALSE)
   if (!dir.exists(dest_dir)) dir.create(dest_dir, recursive = TRUE)
-  
+
   is_windows <- .Platform$OS.type == "windows"
   if (is_windows) {
     if (Sys.which("robocopy") == "") stop("robocopy not found.")
@@ -250,7 +251,7 @@ super_copy <- function(source_dirs, dest_dir) {
       cmd <- sprintf('robocopy %s %s /E /MT:16 /R:0 /W:0 /NFL /NDL /COPY:DT /A-:RHS', shQuote(src_abs), shQuote(dest_dir))
       suppressWarnings(system(cmd, show.output.on.console = FALSE))
     }
-  } 
+  }
   else {
     if (Sys.which("rsync") == "") stop("rsync not found. Please install it")
     src_abs <- normalizePath(source_dirs, mustWork = TRUE)
