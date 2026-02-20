@@ -35,7 +35,7 @@ prepare_for_jasp_loading <- function() {
   #read old timestamps
   dir_dates_old <- c()
   if(fs::file_exists(fs::path(pkg_lib, "READY"))) {
-    tmp <- readRDS(fs::path(pkg_lib, "READY"))
+    tmp <- tryCatch({ readRDS(fs::path(pkg_lib, "READY"))}, error = function(e) {return(NULL)})
     if(!is.null(tmp)) dir_dates_old <- tmp
   }
 
