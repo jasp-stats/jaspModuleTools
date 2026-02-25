@@ -188,7 +188,7 @@ linkPrefixMapToJASP <- c(
   "^/usr/local/lib"                                                 = paste0(framework_resources, "opt/local/lib"),
   "^/opt/gfortran/lib/gcc/x86_64-apple-darwin20.0/14.2.0"           = paste0(framework_resources, "opt/R/x86_64/gfortran/lib"),
   "^/opt/gfortran/lib/gcc/aarch64-apple-darwin20.0/14.2.0"          = paste0(framework_resources, "opt/R/arm64/gfortran/lib"),
-  "^/opt/X11/lib/"                                                  = paste0(framework_resources, "opt/X11/lib")
+  "^/opt/X11/lib"                                                  = paste0(framework_resources, "opt/X11/lib")
 )
 linkPrefixMapToJASP <- linkPrefixMapToJASP[order(nchar(names(linkPrefixMapToJASP)), decreasing = TRUE)]
 
@@ -262,5 +262,6 @@ super_copy <- function(source_dirs, dest_dir) {
     system(cmd)
   }
 }
+
 
 
