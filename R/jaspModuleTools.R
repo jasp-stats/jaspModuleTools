@@ -88,7 +88,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
   }
   workdir <- fs::path_abs(fs::dir_create(workdir))
   resultdir <- fs::path_abs(fs::dir_create(resultdir))
-  pkglib <- fs::dir_create(workdir, fs::path_file(moduledir))
+  pkglib <- fs::dir_create(workdir, fs::path_file(fs::path_abs(moduledir)))
   lockfile <- processLockFile(file.path(moduledir, 'renv.lock'), moduledir, localizeJASPModules)
 
   #set everything relative to the working directory no surprises
