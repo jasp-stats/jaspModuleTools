@@ -124,6 +124,8 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
     clean    = TRUE,
     prompt   = FALSE
   )
+  install.packages(moduledir, repos = NULL, type = "source", lib = pkglib)
+
 
   #copy over the missing pkgs from sandbox so we truly have all that is required in one place
   allRequired <- names(renv::lockfile_read(file=lockfile)$Packages)
