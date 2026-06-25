@@ -139,7 +139,9 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
     fix_mac_linking(pkglib)
   }
 
-  if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest=c(includeInManifest, jaspVersion=buildforJaspVersion), repoNames=c(repoName))
+  includeInManifest=c(includeInManifest, jaspVersion=buildforJaspVersion)
+  print(includeInManifest)
+  if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest, repoNames=c(repoName))
   if(deleteLibrary) unlink(pkglib, recursive = TRUE)
 }
 
