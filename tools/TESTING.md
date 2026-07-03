@@ -139,6 +139,19 @@ options(repos = c(JASP = "http://localhost:8765/latest"))
 options(repos = c(CRAN = "http://localhost:8765/latest"))
 ```
 
+### Gotcha: preventing pkgdepends from using locally installed packages
+
+By default pkgdepends can short-circuit and use whatever version is already installed locally, bypassing the pinned RSPM snapshot. To force ALL resolution through the repo:
+
+```r
+empty_lib <- tempfile()
+dir.create(empty_lib)
+.libPaths(empty_lib)             # pkgdepends sees no installed packages
+pd$set_solve_policy("upgrade")   # highest version wins — from the repo only
+```
+
+This is safe: base packages (`stats`, `graphics` — `Priority: base`) are implicit and never installed. Recommended packages (`MASS`, `Matrix`, `nlme`) are in RSPM and get resolved from the snapshot at a pinned version — consistent across machines, not whatever R happened to ship with.
+
 ## What's next (compile() development)
 
 The `compile()` function currently uses the old `gatherRemoteCellar()` + `expandCellarIntoRenvCache()` flow. Phase 2 replaces this with:
