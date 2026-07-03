@@ -1,53 +1,55 @@
 ################################# Lock file stuff ##################################################
 
 
-getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
-  old_repos <- getOption("repos")
-  if (!is.null(repos)) {
-    options(repos = c(CRAN = repos))
-    on.exit(options(repos = old_repos), add = TRUE)
+getRecordsFromPkgdepends <- function(modulePkg) {
+  getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
+    old_repos <- getOption("repos")
+    old_libs  <- .libPaths()
+    if (!is.null(repos)) {
+      options(repos = c(CRAN = repos))
+      on.exit(options(repos = old_repos), add = TRUE)
+    }
+    # Force resolution through repos only — point library at an empty temp dir
+    # so pkgdepends never finds locally installed packages.
+    empty_lib <- tempfile("jasp_pkgdeps_lib")
+    dir.create(empty_lib, recursive = TRUE)
+    .libPaths(empty_lib)
+    on.exit(.libPaths(old_libs), add = TRUE)
+
+    pkg_ref <- if (startsWith(modulePkg, "/") || grepl("^[A-Z]:", modulePkg))
+      modulePkg else paste0('./', modulePkg)
+    pd <- pkgdepends::new_pkg_deps(pkg_ref)
+    pd$set_solve_policy(policy = "upgrade")
+    pd$solve()
+    pd$stop_for_solution_error()
+    res <- pd$get_solution()
+    dat <- res$data
+
+    fromRepository <- which(dat$type == "standard")
+    fromGitHub     <- which(dat$type == "github")
+
+    recordsFromRepository <- setNames(lapply(fromRepository, function(i) {
+      required <- dat$deps[[i]]$type != "enhances" & dat$deps[[i]]$type != "suggests"
+      list(Package = dat$package[i], Version = dat$version[i], Source = "Repository", Requirements = unique(dat$deps[[i]]$package[required]))
+    }), dat$package[fromRepository])
+
+    recordsFromGithub <- setNames(lapply(fromGitHub, function(i) {
+      required <- dat$deps[[i]]$type != "enhances" & dat$deps[[i]]$type != "suggests"
+      list(
+        Package        = dat$package[i],
+        Version        = dat$version[i],
+        Source         = "GitHub",
+        Requirements   = unique(dat$deps[[i]]$package[required]),
+        RemoteType     = dat$metadata[[i]][["RemoteType"]],
+        RemoteHost     = dat$metadata[[i]][["RemoteHost"]],
+        RemoteUsername = dat$metadata[[i]][["RemoteUsername"]],
+        RemoteRepo     = dat$metadata[[i]][["RemoteRepo"]],
+        RemoteSha      = dat$metadata[[i]][["RemoteSha"]]
+      )
+    }), dat$package[fromGitHub])
+
+    c(recordsFromGithub, recordsFromRepository)
   }
-  pkg_ref <- if (startsWith(modulePkg, "/") || grepl("^[A-Z]:", modulePkg))
-    modulePkg else paste0('./', modulePkg)
-  pd <- pkgdepends::new_pkg_deps(pkg_ref)
-  pd$set_solve_policy(policy = "upgrade")
-  pd$solve()
-  pd$stop_for_solution_error()
-  res <- pd$get_solution()
-  dat <- res$data
-
-  # this could be expanded but we currently do not support other repos anyway...
-  fromRepository <- which(dat$type == "standard")
-  fromGitHub     <- which(dat$type == "github")
-  fromInstalled  <- which(dat$type == "installed")
-
-  recordsFromRepository <- setNames(lapply(fromRepository, function(i) {
-    required <- dat$deps[[i]]$type != "enhances" & dat$deps[[i]]$type != "suggests"
-    list(Package = dat$package[i], Version = dat$version[i], Source = "Repository", Requirements = unique(dat$deps[[i]]$package[required]))
-  }), dat$package[fromRepository])
-
-  recordsFromInstalled <- setNames(lapply(fromInstalled, function(i) {
-    required <- dat$deps[[i]]$type != "enhances" & dat$deps[[i]]$type != "suggests"
-    list(Package = dat$package[i], Version = dat$version[i], Source = "Repository", Requirements = unique(dat$deps[[i]]$package[required]))
-  }), dat$package[fromInstalled])
-
-  recordsFromGithub <- setNames(lapply(fromGitHub, function(i) {
-    required <- dat$deps[[i]]$type != "enhances" & dat$deps[[i]]$type != "suggests"
-    list(
-      Package        = dat$package[i],
-      Version        = dat$version[i],
-      Source         = "GitHub",
-      Requirements   = unique(dat$deps[[i]]$package[required]),
-      RemoteType     = dat$metadata[[i]][["RemoteType"]],
-      RemoteHost     = dat$metadata[[i]][["RemoteHost"]],
-      RemoteUsername = dat$metadata[[i]][["RemoteUsername"]],
-      RemoteRepo     = dat$metadata[[i]][["RemoteRepo"]],
-      RemoteSha      = dat$metadata[[i]][["RemoteSha"]]
-    )
-  }), dat$package[fromGitHub])
-
-  combinedRecords <- c(recordsFromInstalled, recordsFromGithub, recordsFromRepository)
-}
 
 
 processLockFile <- function(lockfile, pathToModule, installMode = "identicalToLockfile") {
@@ -267,84 +269,9 @@ super_copy <- function(source_dirs, dest_dir) {
     src_string <- paste(shQuote(src_formatted), collapse = " ")
     print(paste0("Copying '", src_string, "' to '", dest_dir, "'"))
     cmd <- sprintf("rsync -rltL --chmod=Du+rwx %s %s", src_string, shQuote(dest_dir))
-      system(cmd)
-    }
+    system(cmd)
   }
-
-
-  ## --------------------------------------------------------------------------
-  ## Server helpers — ensure_repo_server() / server_is_running() /
-  ## resolve_version_for_server()
-  ## --------------------------------------------------------------------------
-
-  ## Lightweight check: is the repo server reachable? Works both in-process
-  ## (checks .repo_server_state) and cross-process (checks via HTTP).
-  server_is_running <- function() {
-    # In-process: was the server sourced and started here?
-    if (exists(".repo_server_state", envir = .GlobalEnv, inherits = FALSE)) {
-      st <- get(".repo_server_state", envir = .GlobalEnv)
-      if (!is.null(st$server)) return(TRUE)
-    }
-    # Cross-process: check if something is listening on the expected port.
-    base <- getOption("jasp.local_repo", NULL)
-    if (is.null(base)) return(FALSE)
-    tryCatch({
-      h <- curl::curl_fetch_memory(paste0(base, "/health"))
-      h$status_code == 200L
-    }, error = function(e) FALSE)
-  }
-
-  ## Start the repo server if it isn't already running.
-  ## `os` can be forced for testing (e.g. "Windows"), or NULL for auto-detect.
-  ensure_repo_server <- function(os = NULL, version = "latest") {
-    if (server_is_running()) {
-      message("[jaspModuleTools] repo server already running on ",
-              getOption("jasp.local_repo", "?"))
-      # Still resolve the version so lockfile gets pinned correctly.
-      resolved <- resolve_version_for_server(version)
-      options(jasp.local_repo_version = resolved)
-      return(invisible(getOption("jasp.local_repo")))
-    }
-
-    # Source the server and start it.
-    server_path <- system.file("tools", "repo_server.R", package = "jaspModuleTools")
-    if (!file.exists(server_path))
-      server_path <- "tools/repo_server.R"  # dev mode
-    source(server_path, local = FALSE)
-
-    config_path <- system.file("tools", "repos.json", package = "jaspModuleTools")
-    if (!file.exists(config_path))
-      config_path <- "tools/repos.json"
-
-    cache_dir <- getOption("jasp.repo_cache_path",
-                           fs::path_expand("~/.jasp/repo_cache"))
-    options(jasp.repo_cache_path = cache_dir)
-
-    start_repo_server(
-      config_url = config_path,
-      os         = os,
-      cache_path = cache_dir
-    )
-
-    # Resolve "latest" -> actual date stamp so the lockfile is pinned.
-    resolved <- resolve_version_for_server(version)
-    options(jasp.local_repo_version = resolved)
-
-    invisible(getOption("jasp.local_repo"))
-  }
-
-  ## Resolve the actual version key from a user-facing label.
-  ## Reads repos.json directly — no server sourcing required.
-  resolve_version_for_server <- function(version) {
-    config_path <- system.file("tools", "repos.json", package = "jaspModuleTools")
-    if (!file.exists(config_path))
-      config_path <- "tools/repos.json"
-    if (!file.exists(config_path)) return(version)
-    cfg <- jsonlite::fromJSON(readLines(config_path, warn = FALSE), simplifyVector = FALSE)
-    if (isTRUE(version == "latest")) return(cfg$latest)
-    if (version %in% names(cfg$versions)) return(version)
-    cfg$latest
-  }
+}
 
 
 
