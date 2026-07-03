@@ -1,0 +1,15 @@
+{
+  "rspm": {
+    "base_url": "https://packagemanager.posit.co/cran/{date}"
+  },
+  "jasp-repo": {
+    "url": "https://repo.jasp-stats.org/{version}/{r_version}/{os}/{arch}"
+  },
+  "versions": {
+    "2026-07-03": {
+      "rspm": "2026-07-03",
+      "jasp-repo": "0.19.2"
+    }
+  },
+  "latest": "2026-07-03"
+}

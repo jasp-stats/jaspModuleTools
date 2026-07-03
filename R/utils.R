@@ -1,7 +1,12 @@
 ################################# Lock file stuff ##################################################
 
 
-getRecordsFromPkgdepends <- function(modulePkg) {
+getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
+  old_repos <- getOption("repos")
+  if (!is.null(repos)) {
+    options(repos = c(JASP = repos))
+    on.exit(options(repos = old_repos), add = TRUE)
+  }
   pd <- pkgdepends::new_pkg_deps(paste0('./', modulePkg))
   pd$set_solve_policy(policy = "upgrade")
   pd$solve()
@@ -260,9 +265,121 @@ super_copy <- function(source_dirs, dest_dir) {
     src_string <- paste(shQuote(src_formatted), collapse = " ")
     print(paste0("Copying '", src_string, "' to '", dest_dir, "'"))
     cmd <- sprintf("rsync -rltL --chmod=Du+rwx %s %s", src_string, shQuote(dest_dir))
-    system(cmd)
+      system(cmd)
+    }
   }
-}
+
+
+  ## --------------------------------------------------------------------------
+  ## Server-backed updateLockfile() — resolves against the local repo server
+  ## instead of public CRAN, pinning deps to a specific JASP snapshot.
+  ## --------------------------------------------------------------------------
+
+  #' Updates lockfile using local repo server
+  #'
+  #' @description Resolves all module dependencies against the JASP local repo
+  #'   server (which merges version-pinned RSPM + jasp-repo). Writes a lockfile
+  #'   with JASP.RepoVersion baked in so subsequent compiles use the same snapshot.
+  #' @param moduledir Path to the jaspModule root folder
+  #' @param jaspModuleDependenciesOnly If TRUE, only update jasp-* packages
+  #'   (keep all other records unchanged from the current lockfile).
+  #' @param version JASP version label to pin (e.g. "0.19.2", "development").
+  #'   Default: "latest" which resolves to the config's latest key.
+  #' @export
+  updateLockfileServer <- function(moduledir, jaspModuleDependenciesOnly = FALSE,
+                                   version = "latest") {
+    lockfilePath <- fs::path(moduledir, "renv.lock")
+
+    # 1. Ensure the local repo server is running.
+    ensure_repo_server(os = NULL, version = version)
+
+    # 2. Read current lockfile (may not exist for first-time modules).
+    currentRecords <- NULL
+    if (fs::file_exists(lockfilePath))
+      currentRecords <- renv::lockfile_read(lockfilePath)
+
+    # 3. Locked records (JASP_LOCK flag) — never overwritten.
+    getLockedRecords <- function(pkg) !is.null(pkg$JASP_LOCK)
+    lockedRecords  <- Filter(getLockedRecords, currentRecords$Packages)
+    lockedNames    <- lapply(lockedRecords, function(x) x$Package)
+
+    # 4. Resolve fresh records from the local repo server via pkgdepends.
+    repo_base <- paste0(getOption("jasp.local_repo"), "/", version)
+    newRecords <- getRecordsFromPkgdepends(moduledir, repos = repo_base)
+
+    # 5. Merge: locked records win over new ones.
+    noConflicts <- function(pkg) !(pkg$Package %in% lockedNames)
+    nonConflicting <- Filter(noConflicts, newRecords)
+    processedRecords <- c(lockedRecords, nonConflicting)
+
+    # 6. jaspModuleDependenciesOnly: only refresh jasp-* packages.
+    if (jaspModuleDependenciesOnly) {
+      isJASPRecord  <- function(pkg) grepl("jasp", pkg$Package)
+      notJASPRecord <- function(pkg) !isJASPRecord(pkg)
+      newjaspRecords <- Filter(isJASPRecord, newRecords)
+      oldRecords     <- Filter(notJASPRecord, currentRecords$Packages)
+      processedRecords <- c(oldRecords, newjaspRecords)
+    }
+
+    # 7. Write the lockfile with JASP.RepoVersion injected.
+    if (fs::file_exists(lockfilePath))
+      fs::file_delete(lockfilePath)
+    lockfile <- renv:::renv_lockfile_init(NULL)
+    lockfile <- renv::record(processedRecords, lockfile = lockfile)
+
+    # Inject JASP metadata so the server knows which snapshot to use.
+    lockfile$JASP <- list(
+      RepoVersion = resolve_version_for_server(version)
+    )
+
+    renv::lockfile_write(lockfile, lockfilePath)
+    sprintf("renv lockfile written for: %s", moduledir)
+  }
+
+
+  ## Start the repo server if it isn't already running.
+  ## `os` can be forced for testing (e.g. "Windows"), or NULL for auto-detect.
+  ensure_repo_server <- function(os = NULL, version = "latest") {
+    status <- repo_server_status()
+    if (isTRUE(status$running)) {
+      message("[updateLockfile] repo server already running on ", status$url)
+      return(invisible(status$url))
+    }
+
+    # Source the server and start it.
+    server_path <- system.file("tools", "repo_server.R", package = "jaspModuleTools")
+    if (!file.exists(server_path))
+      server_path <- "tools/repo_server.R"  # dev mode
+    source(server_path, local = FALSE)
+
+    config_path <- system.file("tools", "repos.json", package = "jaspModuleTools")
+    if (!file.exists(config_path))
+      config_path <- "tools/repos.json"
+
+    cache_dir <- getOption("jasp.repo_cache_path",
+                           fs::path_expand("~/.jasp/repo_cache"))
+    options(jasp.repo_cache_path = cache_dir)
+
+    start_repo_server(
+      config_url = config_path,
+      os         = os,
+      cache_path = cache_dir
+    )
+
+    invisible(getOption("jasp.local_repo"))
+  }
+
+  ## Resolve the actual version key from a user-facing label.
+  resolve_version_for_server <- function(version) {
+    server_path <- system.file("tools", "repo_server.R", package = "jaspModuleTools")
+    if (!file.exists(server_path))
+      server_path <- "tools/repo_server.R"
+    source(server_path, local = TRUE, chdir = FALSE)
+    cfg <- .repo_server_state$config
+    if (isTRUE(version == "latest")) return(cfg$latest)
+    if (version %in% names(cfg$versions)) return(version)
+    cfg$latest
+  }
 
 
 
