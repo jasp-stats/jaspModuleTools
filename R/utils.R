@@ -1,10 +1,9 @@
 ################################# Lock file stuff ##################################################
 
 
-getRecordsFromPkgdepends <- function(modulePkg) {
-  getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
-    old_repos <- getOption("repos")
-    old_libs  <- .libPaths()
+getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
+  old_repos <- getOption("repos")
+  old_libs  <- .libPaths()
     if (!is.null(repos)) {
       options(repos = c(CRAN = repos))
       on.exit(options(repos = old_repos), add = TRUE)
