@@ -7,19 +7,22 @@ Maintainer: Rens Dofferhoff <r.m.j.dofferhoff@uva.nl>
 Description: Compiles, Packages and Updates JASP modules
 License: GPL2+
 Encoding: UTF-8
-Depends: 
+Depends:
     R (>= 3.4),
     withr
 Imports:
+    callr,
+    curl,
+    httpuv,
     jaspModuleBundleManager,
+    jsonlite,
     renv,
     fs,
     pkgdepends,
-    usethis,
     withr
 Remotes:
     jasp-stats/jaspModuleBundleManager,
 RoxygenNote: 7.3.3
-Suggests: 
+Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3

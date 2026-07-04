@@ -21,10 +21,10 @@ The server merges two frozen sources per date-stamped version (RSPM + jasp-repo)
 
 | File | Purpose |
 |---|---|
-| `tools/repo_server.R` | The HTTP server (httpuv) — merged PACKAGES, `/prime`, `/primed/{sid}/...`, binary cache & jasp-repo format conversion |
-| `tools/repos.json` | Config — RSPM dates, jasp-repo versions, `latest` pointer |
-| `tools/repo_server.md` | Detailed architecture docs with Mermaid diagrams |
-| `tools/test_repo_server.R` | Automated end-to-end test (simulates Windows) |
+| `inst/tools/repo_server.R` | The HTTP server (httpuv) — merged PACKAGES, `/prime`, `/primed/{sid}/...`, binary cache & jasp-repo format conversion |
+| `inst/tools/repos.json` | Config — RSPM dates, jasp-repo versions, `latest` pointer |
+| `inst/tools/repo_server.md` | Detailed architecture docs with Mermaid diagrams |
+| `inst/tools/test_repo_server.R` | Automated end-to-end test (simulates Windows) |
 | `R/utils.R` | Helpers: `server_is_running()`, `ensure_repo_server()`, `resolve_version_for_server()` |
 | `R/jaspModuleTools.R` | Updated `start_jasp_development()`, `compile()`, `updateLockfile()` |
 
@@ -83,7 +83,7 @@ compile("~/jaspTTests")          # prime + install from exact snapshot
 
 ```bash
 # From project root
-Rscript tools/test_repo_server.R
+Rscript inst/tools/test_repo_server.R
 ```
 
 Expected output: `ALL TESTS PASSED`
@@ -102,8 +102,8 @@ Tested against `/home/sp42/modules-registry/Official/jaspTTests` (Linux, R 4.6).
 
 ```bash
 # 1. Start server in background
-Rscript -e 'source("tools/repo_server.R");
-  start_repo_server(config_url="tools/repos.json", port=8765L);
+Rscript -e 'source("inst/tools/repo_server.R");
+  start_repo_server(config_url="inst/tools/repos.json", port=8765L);
   while(TRUE) { httpuv::service(200); Sys.sleep(0.01) }' &
 
 # 2. Wait for pre-merge (~5s for 24k packages)

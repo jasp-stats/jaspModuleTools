@@ -3,21 +3,19 @@
 
 getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
   old_repos <- getOption("repos")
-  old_libs  <- .libPaths()
     if (!is.null(repos)) {
       options(repos = c(CRAN = repos))
       on.exit(options(repos = old_repos), add = TRUE)
     }
-    # Force resolution through repos only — point library at an empty temp dir
-    # so pkgdepends never finds locally installed packages.
+    # Point pkgdepends at an empty library so it never sees locally
+    # installed packages during resolution — forces everything through
+    # the repo (the pinned RSPM snapshot).
     empty_lib <- tempfile("jasp_pkgdeps_lib")
     dir.create(empty_lib, recursive = TRUE)
-    .libPaths(empty_lib)
-    on.exit(.libPaths(old_libs), add = TRUE)
 
     pkg_ref <- if (startsWith(modulePkg, "/") || grepl("^[A-Z]:", modulePkg))
       modulePkg else paste0('./', modulePkg)
-    pd <- pkgdepends::new_pkg_deps(pkg_ref)
+    pd <- pkgdepends::new_pkg_deps(pkg_ref, config = list(library = empty_lib))
     pd$set_solve_policy(policy = "upgrade")
     pd$solve()
     pd$stop_for_solution_error()
@@ -47,7 +45,10 @@ getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
       )
     }), dat$package[fromGitHub])
 
-    c(recordsFromGithub, recordsFromRepository)
+    list(
+      records       = c(recordsFromGithub, recordsFromRepository),
+      install_order = dat$package  # pkgdepends solution is in dependency order
+    )
   }
 
 
@@ -91,6 +92,175 @@ addLocalJaspToVersion <- function(version) {
   if (!endsWith(x = version, suffix = suffix))
     return(paste0(version, suffix))
   return(version)
+}
+
+##################################################################################################
+
+
+
+################################# Repo Server Helpers ###########################################
+
+# Null-coalescing helper (mirrors the one in repo_server.R)
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+# Check if the local repo server is responding on the given port.
+server_is_running <- function(port = 8765L) {
+  base <- getOption("jasp.local_repo", sprintf("http://localhost:%d", port))
+  h <- curl::new_handle(timeout = 3L, connecttimeout = 2L)
+  tryCatch({
+    resp <- curl::curl_fetch_memory(paste0(base, "/health"), handle = h)
+    isTRUE(resp$status_code == 200L)
+  }, error = function(e) FALSE)
+}
+
+# Resolve the path to a file bundled with the package.
+# Looks in inst/tools/ (dev mode) or the installed package tree.
+repo_server_file <- function(filename) {
+  # First: installed package path (system.file resolves inst/tools/ -> tools/)
+  pkg_path <- system.file("tools", filename, package = "jaspModuleTools")
+  if (nzchar(pkg_path) && file.exists(pkg_path)) return(pkg_path)
+  # Fallback: dev mode (working directory = package root)
+  dev_path <- file.path("inst", "tools", filename)
+  if (file.exists(dev_path)) return(dev_path)
+  stop("Cannot find ", filename, ". Set working directory to the package root or install the package.")
+}
+
+# Resolve "latest" to the actual version date-stamp from the server or config.
+resolve_version_for_server <- function(version = "latest") {
+  if (!isTRUE(version == "latest")) {
+    options(jasp.local_repo_version = version)
+    return(version)
+  }
+
+  # Try the server's /health endpoint first.
+  base <- getOption("jasp.local_repo", "http://localhost:8765")
+  tryCatch({
+    h <- curl::new_handle(timeout = 3L, connecttimeout = 2L)
+    resp <- curl::curl_fetch_memory(paste0(base, "/health"), handle = h)
+    if (resp$status_code == 200L) {
+      health <- jsonlite::fromJSON(rawToChar(resp$content))
+      if (!is.null(health$latest)) {
+        options(jasp.local_repo_version = health$latest)
+        return(health$latest)
+      }
+    }
+  }, error = function(e) NULL)
+
+  # Fallback: read repos.json directly.
+  tryCatch({
+    cfg <- jsonlite::fromJSON(repo_server_file("repos.json"))
+    options(jasp.local_repo_version = cfg$latest)
+    return(cfg$latest)
+  }, error = function(e) "latest")
+}
+
+# Ensure the local repo server is running; start it in a background process
+# if not.  httpuv needs R's event loop — in batch/script mode a foreground
+# server blocks, so we always spawn a separate R process.
+ensure_repo_server <- function(version = "latest", config_url = NULL,
+                                github_pat = NULL, port = 8765L,
+                                cache_path = NULL) {
+  if (server_is_running(port)) {
+    options(jasp.local_repo = sprintf("http://localhost:%d", port))
+    resolve_version_for_server(version)
+    return(invisible(port))
+  }
+
+  # Resolve paths (they may be relative from the package root).
+  server_script <- repo_server_file("repo_server.R")
+  config_file   <- config_url %||% repo_server_file("repos.json")
+
+  # Resolve github_pat (mirrors resolve_github_pat in repo_server.R).
+  pat <- github_pat
+  if (is.null(pat) || !nzchar(pat)) {
+    for (ev in c("GITHUB_PAT", "GITHUB_TOKEN")) {
+      v <- Sys.getenv(ev)
+      if (nzchar(v)) { pat <- v; break }
+    }
+  }
+
+  # Write a temporary script that sources the server and starts it,
+  # then spins the event loop.  The PID is written to a temp file so
+  # we can kill it later.
+  tmp_script   <- tempfile("jasp_server_", fileext = ".R")
+  tmp_pidfile  <- tempfile("jasp_server_", fileext = ".pid")
+  tmp_out      <- tempfile("jasp_server_", fileext = ".out")
+
+  # Normalize paths for the background script (must use forward slashes).
+  server_path <- normalizePath(server_script, winslash = "/", mustWork = TRUE)
+  config_path <- normalizePath(config_file,   winslash = "/", mustWork = TRUE)
+
+  args <- c(
+    sprintf('cat(Sys.getpid(), file = "%s")', normalizePath(tmp_pidfile, winslash = "/", mustWork = FALSE)),
+    sprintf('source("%s")', server_path),
+    sprintf('start_repo_server(config_url = "%s", port = %dL%s%s%s)',
+            config_path, port,
+            if (is.null(pat) || !nzchar(pat)) "" else sprintf(', github_pat = "%s"', pat),
+            if (is.null(cache_path)) "" else sprintf(', cache_path = "%s"', normalizePath(cache_path, winslash = "/", mustWork = FALSE)),
+            ""),
+    'while (TRUE) { httpuv::service(200); Sys.sleep(0.01) }'
+  )
+
+  writeLines(args, tmp_script)
+
+  message("[jaspModuleTools] Starting repo server in background (port ", port, ")...")
+  system(sprintf('Rscript --no-save --no-restore "%s" > "%s" 2>&1',
+                  normalizePath(tmp_script, winslash = "/", mustWork = TRUE),
+                  normalizePath(tmp_out, winslash = "/", mustWork = FALSE)),
+         wait = FALSE)
+
+  # Wait for the server to be ready (poll /health).
+  base <- sprintf("http://localhost:%d", port)
+  h <- curl::new_handle(timeout = 3L, connecttimeout = 2L)
+  for (i in 1:120) {
+    if (i %% 10 == 1L) message("[jaspModuleTools] Waiting for server (attempt ", i, "/120)...")
+    Sys.sleep(0.75)
+    resp <- tryCatch(
+      curl::curl_fetch_memory(paste0(base, "/health"), handle = h),
+      error = function(e) list(status_code = 0L)
+    )
+    if (isTRUE(resp$status_code == 200L)) {
+      message("[jaspModuleTools] Server is ready.")
+      break
+    }
+    if (i == 120L)
+      stop("Server failed to start within 90s. Check ", tmp_out)
+  }
+
+  # Store state for cleanup.
+  options(jasp.local_repo = base)
+  assign("jasp_server_pidfile", tmp_pidfile, envir = .GlobalEnv)
+
+  # Register cleanup so the background process dies when this R session exits.
+  reg.finalizer(.GlobalEnv, function(e) {
+    pidfile <- get0("jasp_server_pidfile", envir = e, ifnotfound = NULL)
+    if (!is.null(pidfile) && file.exists(pidfile)) {
+      pid <- tryCatch(as.integer(readLines(pidfile, warn = FALSE)[1]),
+                      error = function(...) NULL)
+      if (!is.null(pid)) {
+        tryCatch(tools::pskill(pid), error = function(...) NULL)
+      }
+    }
+  }, onexit = TRUE)
+
+  resolve_version_for_server(version)
+  invisible(port)
+}
+
+# Stop a background server started by ensure_repo_server().
+stop_jasp_development <- function() {
+  pidfile <- get0("jasp_server_pidfile", envir = .GlobalEnv, ifnotfound = NULL)
+  if (!is.null(pidfile) && file.exists(pidfile)) {
+    pid <- tryCatch(as.integer(readLines(pidfile, warn = FALSE)[1]),
+                    error = function(...) NULL)
+    if (!is.null(pid)) {
+      message("[jaspModuleTools] Stopping repo server (PID ", pid, ")...")
+      tryCatch(tools::pskill(pid), error = function(e)
+        message("[jaspModuleTools] Could not kill process: ", conditionMessage(e)))
+      unlink(pidfile)
+    }
+  }
+  invisible(NULL)
 }
 
 ##################################################################################################
@@ -271,8 +441,3 @@ super_copy <- function(source_dirs, dest_dir) {
     system(cmd)
   }
 }
-
-
-
-
-

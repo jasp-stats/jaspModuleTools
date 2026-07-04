@@ -1,163 +1,220 @@
-#' Compiles given jaspModule and (optionally) creates a JaspModuleBundle
-#' Sets up recommended jasp development environment
+#' Start JASP development environment
 #'
-#' @description Sets up recommended jasp development environment
+#' @description Sets up an isolated build library and starts the local repo
+#'   server.  After this, install.packages() and RStudio's Install button
+#'   resolve against the version-pinned RSPM + jasp-repo snapshot.
+#'
+#' @param update_lockfile If TRUE, run updateLockfile("./") after setup.
+#' @param library Path to an isolated package library for builds.
+#'   Defaults to "./build_lib".  Exported as JASP_PKG_LIBRARY env var.
+#' @param port Port for the local repo server (default 8765).
+#' @param config_url Path or URL to repos.json (auto-detected).
+#' @param github_pat GitHub PAT for source fallback. If NULL/empty, resolved
+#'   from GITHUB_PAT / GITHUB_TOKEN env vars by the server.
+#' @param cache_path Directory for caching binaries (default NULL = disabled).
 #' @export
-start_jasp_development <- function() {
-  usethis::use_build_ignore("jasp_dev_work_dir")
-  workdir <- fs::dir_create(fs::path("./jasp_dev_work_dir"))
+start_jasp_development <- function(update_lockfile = FALSE,
+                                    library = "./build_lib",
+                                    port     = 8765L,
+                                    config_url = NULL,
+                                    github_pat = NULL,
+                                    cache_path = NULL) {
+  # Create isolated build library
+  build_lib <- fs::path_abs(fs::dir_create(library))
+  Sys.setenv(JASP_PKG_LIBRARY = build_lib)
+  message("[jaspModuleTools] Build library: ", build_lib)
 
-  #set everything relative to the working directory no surprises
-  Sys.setenv(RENV_PATHS_ROOT     = fs::dir_create(workdir, 'renv-root'))
-  Sys.setenv(RENV_PATHS_SANDBOX  = fs::dir_create(workdir, 'renv_sandbox'))
-  Sys.setenv(RENV_PATHS_CACHE    = fs::dir_create(workdir, 'renv-cache'))
-  #Sys.setenv(RENV_PATHS_LIBRARY    = fs::dir_create(workdir, 'pkg_library'))
-  library("renv")
+  # Start the local repo server in a background process
+  options(jasp.server_cache_path = cache_path)
+  ensure_repo_server(
+    version    = "latest",
+    config_url = config_url,
+    github_pat = if (is.null(github_pat) || !nzchar(github_pat)) NULL else github_pat,
+    port       = port,
+    cache_path = cache_path
+  )
 
-  sandboxPaths <- renv:::renv_sandbox_activate()
-  renv::sandbox$unlock()
-
-  # Start the local repo server so all install.packages() calls (including
-  # RStudio's Install button) resolve against the merged RSPM+jasp-repo snapshot.
-  ensure_repo_server(version = "latest")
   options(repos = c(CRAN = paste0(getOption("jasp.local_repo"), "/latest")))
   message("[jaspModuleTools] repos set to ", getOption("repos")[["CRAN"]])
+
+  if (update_lockfile)
+    updateLockfile("./")
+
+  invisible(build_lib)
 }
 
 
-#' Collects pkgs in one place and processes them so jasp can load it
+#' Build a JASP module
 #'
+#' @description Resolves dependencies against the pinned RSPM snapshot
+#'   (via the local repo server's /prime session), installs everything
+#'   into an isolated library, and optionally creates a .JASPModule bundle.
 #'
-#' @description Collects pkgs in one place and processes them so jasp can load it
+#' @param moduledir Path to the module root (default "./").
+#' @param update_lockfile If TRUE, refresh renv.lock before building.
+#'   A lockfile is always created if it does not exist.
+#' @param build_bundle If TRUE, create a .JASPModule bundle and clean up
+#'   the build library afterwards.
+#' @param library Path to the isolated package library.  Defaults to the
+#'   JASP_PKG_LIBRARY env var (set by start_jasp_development()), falling
+#'   back to "./build_lib".
 #' @export
-prepare_for_jasp_loading <- function() {
-  renv_active <- !is.null(renv::project())
-  pkg_lib <- fs::path_expand(fs::path("~/jasp_load_dir/", fs::path_file(fs::path_abs("./"))))
-  if(!renv_active) unlink(pkg_lib, recursive = TRUE)
-  fs::dir_create(pkg_lib)
+build <- function(moduledir = "./",
+                  update_lockfile = FALSE,
+                  build_bundle    = FALSE,
+                  library         = NULL) {
+  # ---- resolve library path ----
+  build_lib <- library
+  if (is.null(build_lib)) {
+    build_lib <- Sys.getenv("JASP_PKG_LIBRARY")
+    if (!nzchar(build_lib)) build_lib <- "./build_lib"
+  }
+  build_lib <- fs::path_abs(fs::dir_create(build_lib))
 
-  #read old timestamps
-  dir_dates_old <- c()
-  if(fs::file_exists(fs::path(pkg_lib, "READY"))) {
-    tmp <- tryCatch({ readRDS(fs::path(pkg_lib, "READY"))}, error = function(e) {return(NULL)})
-    if(!is.null(tmp)) dir_dates_old <- tmp
+  # ---- ensure server is running ----
+  ensure_repo_server()
+
+  # ---- lockfile (always create if missing) ----
+  lockfile_path <- fs::path(moduledir, "renv.lock")
+  if (update_lockfile || !fs::file_exists(lockfile_path)) {
+    updateLockfile(moduledir)
   }
 
-  #gather new timestamps
-  dir_dates_new <- c()
-  for(lib in .libPaths()) {
-    all_info <- fs::dir_info(path = lib)
-    dir_dates_new <- c(dir_dates_new, setNames(all_info$modification_time, all_info$path))
+  lockfile <- renv::lockfile_read(lockfile_path)
+  version  <- lockfile$JASP$RepoVersion %||% "latest"
+  pkgs     <- names(lockfile$Packages)
+
+  # ---- prime session (post raw lockfile JSON) ----
+  base <- getOption("jasp.local_repo")
+  lockfile_json <- paste(readLines(lockfile_path, warn = FALSE), collapse = "\n")
+  prime_resp <- curl::curl_fetch_memory(
+    paste0(base, "/prime"),
+    handle = curl::handle_setheaders(
+      curl::new_handle(post = TRUE, postfields = lockfile_json),
+      "Content-Type" = "application/json"
+    )
+  )
+  prime <- jsonlite::fromJSON(rawToChar(prime_resp$content))
+
+  if (!is.null(prime$error))
+    stop("Prime failed: ", prime$error)
+
+  message("[jaspModuleTools] Primed session: ", prime$session,
+          " (", prime$binary, " binary, ",
+          length(prime$source_only), " source-only)",
+          if (length(prime$not_found))
+            paste0(" — NOT FOUND: ", paste(prime$not_found, collapse = ", ")))
+
+  # ---- install from primed session ----
+  # Run in a clean subprocess so loaded packages in the main session
+  # don't block install.packages().  Clean up the session afterwards.
+  # Source-only packages (GitHub remotes) are installed separately
+  # since type="binary" skips them when the .zip returns 404.
+  moduledir_abs <- fs::path_abs(moduledir)
+  source_only <- prime$source_only
+  binary_pkgs <- setdiff(pkgs, source_only)
+
+  # Use pkgdepends' install order from the lockfile (baked in by updateLockfile).
+  install_order <- as.character(lockfile$JASP$InstallOrder)
+  if (length(install_order)) {
+    source_only <- intersect(install_order, source_only)
+    binary_pkgs <- intersect(install_order, binary_pkgs)
   }
-  added_paths <- setdiff(names(dir_dates_new), names(dir_dates_old))
-  common_paths <- intersect(names(dir_dates_new), names(dir_dates_old))
-  modified_paths <- common_paths[dir_dates_new[common_paths] != dir_dates_old[common_paths]]
-  target_paths <- c(added_paths, modified_paths)
 
-  copy_target_paths <- fs::path(pkg_lib, rev(basename(target_paths)))
-  fs::dir_copy(rev(target_paths), copy_target_paths, overwrite = TRUE)
+  tryCatch({
+    callr::r(function(bin_pkgs, src_pkgs, mod, lib, repo) {
+      .libPaths(lib)  # only see build_lib — no user packages leak in
+      # Only install packages not already present in the build library.
+      installed <- rownames(utils::installed.packages(lib.loc = lib))
+      bin_pkgs <- setdiff(bin_pkgs, installed)
+      if (length(bin_pkgs)) {
+        message("Installing ", length(bin_pkgs), " new/missing binary packages")
+        install.packages(bin_pkgs, lib = lib, repos = repo, type = "binary")
+      }
+      # Source-only packages (GitHub remotes) — skip already installed.
+      # Installed one at a time in dependency order (sorted above).
+      src_pkgs <- setdiff(src_pkgs, installed)
+      for (pkg in src_pkgs)
+        install.packages(pkg, lib = lib, repos = repo, type = "source")
+      install.packages(mod, repos = NULL, type = "source", lib = lib)
+    }, args = list(bin_pkgs = binary_pkgs, src_pkgs = source_only,
+                   mod = moduledir_abs,
+                   lib = build_lib, repo = prime$repo_url),
+       stdout = "", stderr = "", error = "error")
+  }, finally = {
+    curl::curl_fetch_memory(
+      paste0(base, "/primed/", prime$session),
+      handle = curl::new_handle(customrequest = "DELETE")
+    )
+  })
 
-  if(Sys.info()["sysname"] == "Darwin") {
-    filter <- function(lib) {
-      any(fs::path_has_parent(lib, copy_target_paths))
+  # ---- macOS linking fix ----
+  if (Sys.info()["sysname"] == "Darwin") {
+    fix_mac_linking(build_lib)
+  }
+
+  # ---- print path for JASP ----
+  module_name <- read.dcf(fs::path(moduledir, "DESCRIPTION"))[1, "Package"]
+  cat("\nJASP module library:", normalizePath(build_lib))
+  cat("\nJASP module:", module_name, "\n\n")
+
+  # ---- optional bundle ----
+  if (build_bundle) {
+    resultdir <- fs::dir_create("./bundles")
+    jaspModuleBundleManager::createJaspModuleBundle(
+      moduleLib        = build_lib,
+      moduleName       = module_name,
+      resultdir        = resultdir,
+      packageAll       = TRUE,
+      includeInManifest = c(jaspVersion = version),
+      repoNames        = c(version)
+    )
+    message("[jaspModuleTools] Bundle created in ", resultdir)
+  }
+
+  invisible(build_lib)
+}
+
+
+#' Reset the development environment
+#'
+#' @description Kills the background repo server (clearing all its caches
+#'   and sessions) and optionally wipes the build library so the next
+#'   build starts fresh.
+#'
+#' @param clear_library If TRUE, delete the build_lib directory.
+#'   Default TRUE.
+#' @export
+reset <- function(clear_library = TRUE) {
+  stop_jasp_development()
+
+  build_lib <- Sys.getenv("JASP_PKG_LIBRARY")
+  if (!nzchar(build_lib)) build_lib <- "./build_lib"
+
+  # Wipe binary cache if one was configured (server state, always cleared).
+  cache <- getOption("jasp.server_cache_path")
+  if (!is.null(cache) && fs::dir_exists(cache)) {
+    fs::dir_delete(cache)
+    message("[jaspModuleTools] Deleted server cache: ", cache)
+  }
+
+  if (clear_library) {
+    if (fs::dir_exists(build_lib)) {
+      fs::dir_delete(build_lib)
+      message("[jaspModuleTools] Deleted build library: ", build_lib)
     }
-    fix_mac_linking(pkg_lib, filter)
   }
-  saveRDS(dir_dates_new, file=fs::path(pkg_lib, "READY"))
-  cat("Please set the following file Path in JASP: \n",  pkg_lib)
+
+  message("[jaspModuleTools] Environment reset.")
+  invisible(NULL)
 }
 
-#stop_jasp_development <- function() {
-#  renv:::renv_sandbox_deactivate()
-#  TRUE
-#}
-
-#' Compiles given jaspModule and (optionally) creates a JaspModuleBundle
-#'
-#' @description Compiles given jaspModule and (optionally) creates a JaspModuleBundle. Will gather binaries from the JASP Remote Cellar Repo.
-#' @param moduledir Path to the jaspModule root folder
-#' @param workdir Path where the renv cache and pkglib will be created
-#' @param resultdir Path to dir where the resulting bundle will be created
-#' @param createBundle Should a JASP bundle be created
-#' @param bundleAll Should all dependencies be bundled? by default we bundle only those not present in the Remote Cellar Repo
-#' @param buildforJaspVersion Specifies the jaspVersion for which this module should be compiled and bundeld
-#' @param useJASPRemoteCellar should we use the Remote Cellar?
-#' @param repoName which remote repo should be used? for expample 0.19.3 or development
-#' @param localCellar local cellar path to also include for development purposes
-#' @export
-compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundleAll=TRUE, buildforJaspVersion='development', useJASPRemoteCellar=TRUE, repoName='development', localCellar='', localizeJASPModules = 'localizeModuleOnly', includeInManifest = c(), deleteLibrary= FALSE) {
-  if(missing(workdir)) {
-    workdir <- fs::dir_create(tempdir(), fs::path_file(moduledir))
-    withr::defer(if(fs::dir_exists(workdir))fs::dir_delete(workdir))
-  }
-  workdir <- fs::path_abs(fs::dir_create(workdir))
-  resultdir <- fs::path_abs(fs::dir_create(resultdir))
-  pkglib <- fs::dir_create(workdir, fs::path_file(fs::path_abs(moduledir)))
-
-  # Ensure the repo server is running so cellar/install can resolve deps.
-  ensure_repo_server(version = repoName)
-
-  lockfile <- processLockFile(file.path(moduledir, 'renv.lock'), moduledir, localizeJASPModules)
-
-  #set everything relative to the working directory no surprises
-  Sys.setenv(RENV_PATHS_ROOT     = fs::dir_create(workdir, 'renv-root'))
-  Sys.setenv(RENV_PATHS_SANDBOX  = fs::dir_create(workdir, 'renv_sandbox'))
-  Sys.setenv(RENV_PATHS_CACHE    = fs::dir_create(workdir, 'renv-cache'))
-  Sys.setenv(RENV_SANDBOX_LOCKING_ENABLED = FALSE)
-
-  #handle cellar
-  cellardir <- fs::dir_create(workdir, 'cellar')
-  notGathered <- c()
-  #Sys.setenv(RENV_PATHS_CELLAR = cellardir) # for now we sadly expand manually because renv is vey inconsistent when using binary in cellar
-  if(useJASPRemoteCellar) notGathered <- gatherRemoteCellar(lockfile, cellardir, repoName=repoName)
-  if(fs::dir_exists(fs::path(localCellar))) fs::dir_copy(localCellar, cellardir, overwrite = TRUE)
-
-  options(
-    "install.opts"                = "--no-multiarch --no-docs --no-test-load", # no test-load because on mac the paths need to be fixed
-    "renv.config.install.verbose" = TRUE,
-    "renv.index.enabled"          = FALSE,
-    "renv.config.install.transactional" = FALSE
-  )
-
-  sandboxPaths <- renv:::renv_sandbox_activate()
-  renv::sandbox$unlock()
-  withr::defer(renv:::renv_sandbox_deactivate())
-
-  #expand cellar into renv_cache manually for now. RenV is weird and this way it makes less decisions
-  expandCellarIntoRenvCache(cellardir)
-
-  records <- renv::restore(
-    library  = pkglib,
-    lockfile = lockfile,
-    clean    = TRUE,
-    prompt   = FALSE
-  )
-  install.packages(moduledir, repos = NULL, type = "source", lib = pkglib)
-
-
-  #copy over the missing pkgs from sandbox so we truly have all that is required in one place
-  allRequired <- names(renv::lockfile_read(file=lockfile)$Packages)
-  presentInlib <- fs::path_file(fs::dir_ls(pkglib))
-  missing <- fs::path(renv:::renv_paths_sandbox(), allRequired[!allRequired %in% presentInlib])
-  fs::dir_copy(missing, fs::path(pkglib, fs::path_file(missing)), overwrite = FALSE)
-
-  renv:::renv_sandbox_deactivate()
-
-  if(Sys.info()["sysname"] == "Darwin") {
-    fix_mac_linking(pkglib)
-  }
-
-  includeInManifest=c(includeInManifest, jaspVersion=buildforJaspVersion)
-  print(includeInManifest)
-  if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest, repoNames=c(repoName))
-  if(deleteLibrary) unlink(pkglib, recursive = TRUE)
-}
 
 #' Updates lockfile using the local repo server
 #'
 #' @description Resolves all module dependencies against the JASP local repo
 #'   server (which merges version-pinned RSPM + jasp-repo), writes a lockfile
-#'   with JASP.RepoVersion baked in so subsequent compiles use the same snapshot.
+#'   with JASP.RepoVersion baked in so subsequent builds use the same snapshot.
 #' @param moduledir Path to the jaspModule root folder
 #' @param jaspModuleDependenciesOnly If TRUE, only update jasp-* packages
 #'   (keep all other records unchanged from the current lockfile).
@@ -184,7 +241,11 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE,
 
   # 4. Resolve fresh records from the local repo server via pkgdepends.
   repo_base <- paste0(getOption("jasp.local_repo"), "/", version)
-  newRecords <- getRecordsFromPkgdepends(moduledir, repos = repo_base)
+  message("[jaspModuleTools] Resolving dependencies against ", repo_base,
+          " (this may take a minute on first run)...")
+  result <- getRecordsFromPkgdepends(moduledir, repos = repo_base)
+  newRecords <- result$records
+  install_order <- result$install_order
 
   # 5. Merge: locked records win over new ones.
   noConflicts <- function(pkg) !(pkg$Package %in% lockedNames)
@@ -208,18 +269,10 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE,
 
   # Inject JASP metadata so the server knows which snapshot to use.
   lockfile$JASP <- list(
-    RepoVersion = getOption("jasp.local_repo_version", version)
+    RepoVersion  = getOption("jasp.local_repo_version", version),
+    InstallOrder = install_order
   )
 
   renv::lockfile_write(lockfile, lockfilePath)
   sprintf("renv lockfile written for: %s", moduledir)
 }
-
-
-
-
-
-
-
-
-

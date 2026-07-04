@@ -1,7 +1,7 @@
 # JASP Local Repo Server — Documentation
 
-> **Implementation:** `tools/repo_server.R` (Phase 1)
-> **Spec:** `tools/SPEC.md` (v2.1)
+> **Implementation:** `inst/tools/repo_server.R` (Phase 1)
+> **Spec:** `inst/tools/SPEC.md` (v2.1)
 >
 > A pure streaming proxy that exposes a **merged, version-pinned, CRAN-like
 > repository** on `localhost`. R's `install.packages()` / `pkgdepends` talk to
@@ -512,7 +512,7 @@ Without it, jasp-repo binaries cannot be served (RSPM binaries still work).
 ### Quick start
 
 ```r
-source("tools/repo_server.R")
+source("inst/tools/repo_server.R")
 
 # Start with auto-detected platform (binds 127.0.0.1:8765)
 start_repo_server()

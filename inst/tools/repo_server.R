@@ -10,13 +10,15 @@
 ## a session map). Every binary/source is fetched from upstream on demand and
 ## streamed to the client; nothing is written to disk.
 ##
-## See tools/SPEC.md (v2.1) for the full design.
+## See inst/tools/SPEC.md (v2.1) for the full design.
 ##
-## Run:
-##   source("tools/repo_server.R")
+## Run (dev mode):
+##   source("inst/tools/repo_server.R")
 ##   start_repo_server()                     # auto-detects platform
 ##   start_repo_server(distro = "noble")     # try Linux binaries
 ##   stop_repo_server()
+##
+## In an installed package, use jaspModuleTools::start_jasp_development().
 ##
 ## Dependencies: httpuv, curl, jsonlite (declared in DESCRIPTION in Phase 2).
 ## ==========================================================================
@@ -545,10 +547,13 @@ text_response <- function(text, status = 200L,
 
 gzipped_response <- function(text, status = 200L,
                              type = "text/plain; charset=utf-8") {
+  # Serve pre-compressed gzip bytes WITHOUT Content-Encoding header.
+  # R's download.file() on Windows saves the raw bytes and R's
+  # read.dcf(gzfile(...)) handles decompression — but only if the
+  # HTTP layer doesn't already decompress (which wininet doesn't).
   list(status = status,
        headers = list(
-         "Content-Type" = type,
-         "Content-Encoding" = "gzip"
+         "Content-Type" = type
        ),
        body = memCompress(charToRaw(text), type = "gzip"))
 }
@@ -816,11 +821,10 @@ resp_health <- function() {
 
 ## GET /{version|latest}/src/contrib/PACKAGES(.gz)
 ## GET /{version|latest}/bin/<wildcard>/PACKAGES(.gz)
-resp_version_packages <- function(version, kind, want_gz) {
+resp_version_packages <- function(version, kind) {
   v <- resolve_version(version)
   if (is.null(v)) return(not_found("Unknown version: ", version))
-  text <- serialize_packages(get_merged(v))
-  if (want_gz) gzipped_response(text) else text_response(text)
+  text_response(serialize_packages(get_merged(v)))
 }
 
 ## POST /prime -> classify a lockfile and create a session.
@@ -894,9 +898,8 @@ handle_prime <- function(req) {
 }
 
 ## GET /primed/{session}/src/contrib/PACKAGES(.gz) or /bin/.../PACKAGES(.gz)
-resp_scoped_packages <- function(sess, want_gz) {
-  text <- serialize_packages(sess$scoped)
-  if (want_gz) gzipped_response(text) else text_response(text)
+resp_scoped_packages <- function(sess) {
+  text_response(serialize_packages(sess$scoped))
 }
 
 ## DELETE /primed/{session}
@@ -923,16 +926,20 @@ handle_primed <- function(req, method, session_id, rest) {
   # .../src/contrib/PACKAGES[.gz]  OR  .../src/contrib/{pkg}_{ver}.tar.gz
   if (length(rest) >= 3L && rest[1L] == "src" && rest[2L] == "contrib") {
     target <- rest[3L]
-    if (target == "PACKAGES")     return(resp_scoped_packages(sess, want_gz = FALSE))
-    if (target == "PACKAGES.gz")  return(resp_scoped_packages(sess, want_gz = TRUE))
+    if (target == "PACKAGES" || target == "PACKAGES.gz")
+      return(resp_scoped_packages(sess))
     return(stream_source(sess, target))
   }
 
   # .../bin/<path>/PACKAGES[.gz]  OR  .../bin/<path>/{pkg}_{ver}.{tgz,tar.gz,zip}
   if (rest[1L] == "bin") {
     last <- rest[length(rest)]
-    if (last == "PACKAGES")    return(resp_scoped_packages(sess, want_gz = FALSE))
-    if (last == "PACKAGES.gz") return(resp_scoped_packages(sess, want_gz = TRUE))
+    # Always serve plain text — R's download.file on Windows doesn't
+    # decompress HTTP Content-Encoding, and .gz with text/plain confuses
+    # read.dcf().  The .gz suffix is a CRAN convention we don't need
+    # on a local server.
+    if (last == "PACKAGES" || last == "PACKAGES.gz")
+      return(resp_scoped_packages(sess))
     return(stream_binary(sess, last))
   }
 
@@ -976,10 +983,10 @@ handle_request <- function(req) {
     version <- segs[1L]
     rest <- segs[-1L]
     if (length(rest) >= 3L && rest[1L] == "src" && rest[2L] == "contrib" && grepl(r"{^PACKAGES(\.gz)?$}", rest[3L])) {
-      return(resp_version_packages(version, kind = "src", want_gz = grepl(r"{\.gz$}", rest[3L])))
+      return(resp_version_packages(version, kind = "src"))
     }
     if (length(rest) >= 2L && rest[1L] == "bin" && grepl(r"{^PACKAGES(\.gz)?$}", rest[length(rest)])) {
-      return(resp_version_packages(version, kind = "bin", want_gz = grepl(r"{\.gz$}", rest[length(rest)])))
+      return(resp_version_packages(version, kind = "bin"))
     }
   }
 

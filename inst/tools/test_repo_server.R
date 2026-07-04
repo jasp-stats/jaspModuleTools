@@ -35,8 +35,8 @@ server_pid_f  <- tempfile(fileext = ".pid")
 
 writeLines(c(
   sprintf('cat(Sys.getpid(), file = "%s")', server_pid_f),
-  'source("tools/repo_server.R")',
-  sprintf('start_repo_server(config_url = "tools/repos.json", os = "Windows", arch = "x86_64", r_version = "4.5", port = %dL, cache_path = "%s")', TEST_PORT, TEST_CACHE),
+  'source("inst/tools/repo_server.R")',
+  sprintf('start_repo_server(config_url = "inst/tools/repos.json", os = "Windows", arch = "x86_64", r_version = "4.5", port = %dL, cache_path = "%s")', TEST_PORT, TEST_CACHE),
   'while (TRUE) { httpuv::service(200); Sys.sleep(0.01) }'
 ), server_script)
 

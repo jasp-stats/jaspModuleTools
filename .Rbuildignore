@@ -1,0 +1,5 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^build_lib$
+^bundles$
+^jasp_server_cache$

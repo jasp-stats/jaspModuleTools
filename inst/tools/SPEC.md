@@ -327,7 +327,7 @@ with `jsonlite` later.
 
 ## 5. Implementation Phases
 
-### Phase 1: Server (`tools/repo_server.R`)
+### Phase 1: Server (`inst/tools/repo_server.R`)
 - Config fetch + validation
 - Platform parameter resolution (os, arch, r_version, distro, macos platform)
 - PACKAGES fetch from RSPM (source + binary)
