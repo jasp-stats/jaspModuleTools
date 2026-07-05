@@ -769,7 +769,9 @@ stream_binary <- function(sess, filename) {
     return(serve_cached_file(cache_file))
 
   # 2. Search all binary sources for this file.
-  # RSPM binary first, then jasp-repo.  404 if not found anywhere.
+  # Use the filename R requested (from binary PACKAGES) directly — the
+  # entry's Version may differ (full merge has source version, binary
+  # PACKAGES has binary version).
 
   # Try RSPM binary.
   url <- paste0(rspm_base_url(sess$version), "/bin/", bp, "/", filename)
@@ -780,8 +782,10 @@ stream_binary <- function(sess, filename) {
     return(raw_response(resp$body, content_type_for(filename)))
   }
 
-  # Fall back to jasp-repo.
-  jasp_filename <- paste0(pkg, "_", entry$Version, ".tar.gz")
+  # Fall back to jasp-repo.  Build .tar.gz filename from the version in
+  # the requested filename (e.g. "pkg_1.0.0.zip" -> "pkg_1.0.0.tar.gz").
+  jasp_ver <- sub(".*_", "", sub("\\.(zip|tgz|tar\\.gz)$", "", filename, ignore.case = TRUE))
+  jasp_filename <- paste0(pkg, "_", jasp_ver, ".tar.gz")
   url <- paste0(jasp_url(sess$version), "/", jasp_filename)
   resp <- tryCatch(fetch_upstream(url),
                    error = function(e) list(status = 502L, body = charToRaw(conditionMessage(e))))
@@ -792,46 +796,54 @@ stream_binary <- function(sess, filename) {
   }
 
   # No binary found anywhere — R falls back to source.
+
+  # No binary found anywhere — R falls back to source.
   return(not_found("No binary for: ", pkg, " (", filename, ")"))
 }
 
 ## Resolve + stream a SOURCE tarball for a primed session.
-## jasp-repo is binary-only — no source tarballs, so return 404 for that origin.
-## Order: RSPM source -> external (GitHub / Repository).
+## GitHub packages only from GitHub.  CRAN packages: RSPM -> live CRAN.
 stream_source <- function(sess, filename) {
   pkg   <- pkg_name_from_filename(filename)
   entry <- sess$scoped[[pkg]]
   if (is.null(entry)) return(not_found("Package not in session: ", pkg))
 
-  headers <- character()
-  url <- NULL
+  rec <- entry$rec %||% list()
 
-  if (entry$origin == "rspm") {
-    url <- paste0(rspm_base_url(sess$version), "/src/contrib/", filename)
-  } else if (entry$origin == "jasp-repo") {
-    # jasp-repo serves only binaries — no source tarballs available.
-    return(not_found("No source for binary-only package: ", pkg))
-  } else if (entry$origin == "external") {
-    rec <- entry$rec
-    if (!is.null(rec$RemoteUsername) && !is.null(rec$RemoteRepo) &&
-        (!is.null(rec$RemoteSha) || !is.null(rec$RemoteRef))) {
-      ref <- rec$RemoteSha %||% rec$RemoteRef
-      url <- sprintf("https://api.github.com/repos/%s/%s/tarball/%s",
-                     rec$RemoteUsername, rec$RemoteRepo, ref)
-      headers <- c(headers,
-                   "Accept" = "application/vnd.github+json",
-                   "X-GitHub-Api-Version" = "2022-11-28")
-      pat <- .repo_server_state$github_pat
-      if (!is.null(pat))
-        headers <- c(headers, "Authorization" = paste("Bearer", pat))
-    } else if (!is.null(rec$Repository)) {
-      url <- paste0(rec$Repository, "/src/contrib/", filename)
-    }
+  # GitHub remote — only source, no fallback.
+  if (!is.null(rec$RemoteUsername) && !is.null(rec$RemoteRepo) &&
+      (!is.null(rec$RemoteSha) || !is.null(rec$RemoteRef))) {
+    ref <- rec$RemoteSha %||% rec$RemoteRef
+    url <- sprintf("https://api.github.com/repos/%s/%s/tarball/%s",
+                   rec$RemoteUsername, rec$RemoteRepo, ref)
+    headers <- c("Accept" = "application/vnd.github+json",
+                 "X-GitHub-Api-Version" = "2022-11-28")
+    pat <- .repo_server_state$github_pat
+    if (!is.null(pat))
+      headers <- c(headers, "Authorization" = paste("Bearer", pat))
+    return(stream_url(url, headers))
   }
 
-  if (is.null(url))
-    return(not_found("No source URL resolvable for: ", pkg))
-  stream_url(url, headers)
+  # External repository URL.
+  if (!is.null(rec$Repository) && nzchar(rec$Repository)) {
+    url <- paste0(rec$Repository, "/src/contrib/", filename)
+    return(stream_url(url))
+  }
+
+  # CRAN package: try RSPM first, then live CRAN.
+  url <- paste0(rspm_base_url(sess$version), "/src/contrib/", filename)
+  resp <- tryCatch(fetch_upstream(url),
+                   error = function(e) list(status = 502L))
+  if (resp$status == 200L)
+    return(raw_response(resp$body, "application/gzip"))
+
+  url <- paste0("https://cloud.r-project.org/src/contrib/", filename)
+  resp <- tryCatch(fetch_upstream(url),
+                   error = function(e) list(status = 502L))
+  if (resp$status == 200L)
+    return(raw_response(resp$body, "application/gzip"))
+
+  return(not_found("No source for: ", pkg, " (", filename, ")"))
 }
 
 
@@ -889,6 +901,10 @@ handle_prime <- function(req) {
 
   merged <- get_merged(version)
 
+  # Binary classification: does the exact lockfile version exist as a binary
+  # in any of our sources?  Check raw binary lists, not the merged version.
+  rspm_bin <- fetch_rspm_binary(version)
+  jasp_bin <- scrape_jasp(version)
   binary      <- character()
   source_only <- character()
   not_found_v <- character()
@@ -896,22 +912,46 @@ handle_prime <- function(req) {
 
   for (name in names(pkgs)) {
     rec <- pkgs[[name]]
-    if (!is.null(rec$Package)) name <- rec$Package   # normalise key vs field
-    if (!is.null(merged[[name]])) {
+    if (!is.null(rec$Package)) name <- rec$Package
+    rspm_match <- !is.null(rspm_bin[[name]]) &&
+                  rspm_bin[[name]]$Version == rec$Version
+    jasp_match <- !is.null(jasp_bin[[name]]) &&
+                  jasp_bin[[name]]$Version == rec$Version
+    if (rspm_match || jasp_match) {
       binary <- c(binary, name)
     } else if (has_source_info(rec)) {
       source_only <- c(source_only, name)
       external[[name]] <- make_external_entry(rec)
+    } else if (!is.null(merged[[name]])) {
+      source_only <- c(source_only, name)
     } else {
       not_found_v <- c(not_found_v, name)
     }
   }
 
-  # Scoped PACKAGES = every lockfile package (binary + source_only). not_found omitted.
+  # Scoped PACKAGES = lockfile packages with exact lockfile versions.
+  # For binary-classified: use merge's DCF (has Depends/Imports).
+  # For source_only with remote: use external entry (GitHub fields).
+  # For source_only without remote: use merge's DCF with lockfile version.
   scoped <- list()
   for (name in names(pkgs)) {
-    if (!is.null(merged[[name]]))    scoped[[name]] <- merged[[name]]
-    else if (!is.null(external[[name]])) scoped[[name]] <- external[[name]]
+    rec <- pkgs[[name]]
+    if (!is.null(rec$Package)) name <- rec$Package
+    if (name %in% binary) {
+      entry <- merged[[name]]
+      entry$raw <- sub(paste0("Version: ", entry$Version),
+                       paste0("Version: ", rec$Version), entry$raw, fixed = TRUE)
+      entry$Version <- rec$Version
+      scoped[[name]] <- entry
+    } else if (name %in% source_only && has_source_info(rec)) {
+      scoped[[name]] <- external[[name]]
+    } else if (!is.null(merged[[name]])) {
+      entry <- merged[[name]]
+      entry$raw <- sub(paste0("Version: ", entry$Version),
+                       paste0("Version: ", rec$Version), entry$raw, fixed = TRUE)
+      entry$Version <- rec$Version
+      scoped[[name]] <- entry
+    }
   }
 
   sid <- new_session_id()
@@ -973,9 +1013,13 @@ handle_primed <- function(req, method, session_id, rest) {
   # .../bin/<path>/PACKAGES[.gz]  OR  .../bin/<path>/{pkg}_{ver}.{tgz,tar.gz,zip}
   if (rest[1L] == "bin") {
     last <- rest[length(rest)]
-    if (last == "PACKAGES" || last == "PACKAGES.gz")
-      return(resp_scoped_packages(sess))
-        return(resp_scoped_packages(sess, binary_only = TRUE))
+    if (last == "PACKAGES" || last == "PACKAGES.gz") {
+      # Only lockfile packages where we have an exact binary match.
+      # Don't show source_only packages — R would try binary → 404
+      # and skip them instead of falling back to source.
+      bin_entries <- sess$scoped[sess$classification$binary]
+      return(text_response(serialize_packages(bin_entries)))
+    }
     return(stream_binary(sess, last))
   }
 

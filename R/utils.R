@@ -15,6 +15,7 @@ getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
 
     pkg_ref <- if (startsWith(modulePkg, "/") || grepl("^[A-Z]:", modulePkg))
       modulePkg else paste0('./', modulePkg)
+
     pd <- pkgdepends::new_pkg_deps(pkg_ref, config = list(library = empty_lib))
     pd$set_solve_policy(policy = "upgrade")
     pd$solve()
@@ -45,10 +46,7 @@ getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
       )
     }), dat$package[fromGitHub])
 
-    list(
-      records       = c(recordsFromGithub, recordsFromRepository),
-      install_order = dat$package  # pkgdepends solution is in dependency order
-    )
+    list(records = c(recordsFromGithub, recordsFromRepository))
   }
 
 
@@ -158,8 +156,7 @@ resolve_version_for_server <- function(version = "latest") {
 # if not.  httpuv needs R's event loop — in batch/script mode a foreground
 # server blocks, so we always spawn a separate R process.
 ensure_repo_server <- function(version = "latest", config_url = NULL,
-                                github_pat = NULL, port = 8765L,
-                                cache_path = NULL) {
+                                github_pat = NULL, port = 8765L) {
   if (server_is_running(port)) {
     options(jasp.local_repo = sprintf("http://localhost:%d", port))
     resolve_version_for_server(version)
@@ -193,10 +190,9 @@ ensure_repo_server <- function(version = "latest", config_url = NULL,
   args <- c(
     sprintf('cat(Sys.getpid(), file = "%s")', normalizePath(tmp_pidfile, winslash = "/", mustWork = FALSE)),
     sprintf('source("%s")', server_path),
-    sprintf('start_repo_server(config_url = "%s", port = %dL%s%s%s)',
+    sprintf('start_repo_server(config_url = "%s", port = %dL%s%s)',
             config_path, port,
             if (is.null(pat) || !nzchar(pat)) "" else sprintf(', github_pat = "%s"', pat),
-            if (is.null(cache_path)) "" else sprintf(', cache_path = "%s"', normalizePath(cache_path, winslash = "/", mustWork = FALSE)),
             ""),
     'while (TRUE) { httpuv::service(200); Sys.sleep(0.01) }'
   )

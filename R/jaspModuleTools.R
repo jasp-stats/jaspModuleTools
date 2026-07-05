@@ -11,27 +11,25 @@
 #' @param config_url Path or URL to repos.json (auto-detected).
 #' @param github_pat GitHub PAT for source fallback. If NULL/empty, resolved
 #'   from GITHUB_PAT / GITHUB_TOKEN env vars by the server.
-#' @param cache_path Directory for caching binaries (default NULL = disabled).
+#' @param github_pat GitHub PAT for source fallback. If NULL/empty, resolved
+#'   from GITHUB_PAT / GITHUB_TOKEN env vars by the server.
 #' @export
 start_jasp_development <- function(update_lockfile = FALSE,
                                     library = "./build_lib",
                                     port     = 8765L,
                                     config_url = NULL,
-                                    github_pat = NULL,
-                                    cache_path = NULL) {
+                                    github_pat = NULL) {
   # Create isolated build library
   build_lib <- fs::path_abs(fs::dir_create(library))
   Sys.setenv(JASP_PKG_LIBRARY = build_lib)
   message("[jaspModuleTools] Build library: ", build_lib)
 
   # Start the local repo server in a background process
-  options(jasp.server_cache_path = cache_path)
   ensure_repo_server(
     version    = "latest",
     config_url = config_url,
     github_pat = if (is.null(github_pat) || !nzchar(github_pat)) NULL else github_pat,
-    port       = port,
-    cache_path = cache_path
+    port       = port
   )
 
   options(repos = c(CRAN = paste0(getOption("jasp.local_repo"), "/latest")))
@@ -114,11 +112,31 @@ build <- function(moduledir = "./",
   source_only <- prime$source_only
   binary_pkgs <- setdiff(pkgs, source_only)
 
-  # Use pkgdepends' install order from the lockfile (baked in by updateLockfile).
-  install_order <- as.character(lockfile$JASP$InstallOrder)
-  if (length(install_order)) {
-    source_only <- intersect(install_order, source_only)
-    binary_pkgs <- intersect(install_order, binary_pkgs)
+  # Topological sort: source-only packages with fewer deps installed first.
+  if (length(source_only)) {
+    src_records <- lockfile$Packages[source_only]
+    dependents <- setNames(vector("list", length(source_only)), source_only)
+    in_degree  <- setNames(integer(length(source_only)), source_only)
+    for (pkg in source_only) {
+      reqs <- src_records[[pkg]]$Requirements
+      src_reqs <- intersect(reqs, source_only)
+      in_degree[pkg] <- length(src_reqs)
+      for (r in src_reqs)
+        dependents[[r]] <- c(dependents[[r]], pkg)
+    }
+    queue <- names(in_degree[in_degree == 0L])
+    sorted <- character(0L)
+    while (length(queue)) {
+      pkg <- queue[1L]
+      queue <- queue[-1L]
+      sorted <- c(sorted, pkg)
+      for (dep in dependents[[pkg]]) {
+        in_degree[dep] <- in_degree[dep] - 1L
+        if (in_degree[dep] == 0L) queue <- c(queue, dep)
+      }
+    }
+    if (length(sorted) == length(source_only))
+      source_only <- sorted
   }
 
   tryCatch({
@@ -136,7 +154,14 @@ build <- function(moduledir = "./",
       src_pkgs <- setdiff(src_pkgs, installed)
       for (pkg in src_pkgs)
         install.packages(pkg, lib = lib, repos = repo, type = "source")
-      install.packages(mod, repos = NULL, type = "source", lib = lib)
+      # Module itself — fail the build if it doesn't install.
+      suppressWarnings(
+        install.packages(mod, repos = NULL, type = "source", lib = lib)
+      )
+      module_name <- read.dcf(file.path(mod, "DESCRIPTION"))[1, "Package"]
+      if (!module_name %in% rownames(utils::installed.packages(lib.loc = lib)))
+        stop("Module ", module_name, " failed to install")
+      TRUE
     }, args = list(bin_pkgs = binary_pkgs, src_pkgs = source_only,
                    mod = moduledir_abs,
                    lib = build_lib, repo = prime$repo_url),
@@ -192,7 +217,7 @@ reset <- function(clear_library = TRUE) {
   if (!nzchar(build_lib)) build_lib <- "./build_lib"
 
   # Wipe binary cache if one was configured (server state, always cleared).
-  cache <- getOption("jasp.server_cache_path")
+  cache <- getOption("jasp.repo_cache_path")
   if (!is.null(cache) && fs::dir_exists(cache)) {
     fs::dir_delete(cache)
     message("[jaspModuleTools] Deleted server cache: ", cache)
@@ -245,7 +270,6 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE,
           " (this may take a minute on first run)...")
   result <- getRecordsFromPkgdepends(moduledir, repos = repo_base)
   newRecords <- result$records
-  install_order <- result$install_order
 
   # 5. Merge: locked records win over new ones.
   noConflicts <- function(pkg) !(pkg$Package %in% lockedNames)
@@ -269,8 +293,7 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE,
 
   # Inject JASP metadata so the server knows which snapshot to use.
   lockfile$JASP <- list(
-    RepoVersion  = getOption("jasp.local_repo_version", version),
-    InstallOrder = install_order
+    RepoVersion = getOption("jasp.local_repo_version", version)
   )
 
   renv::lockfile_write(lockfile, lockfilePath)
