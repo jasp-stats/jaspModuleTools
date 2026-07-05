@@ -338,6 +338,32 @@ compare_keys <- function(ka, kb, va = NA, vb = NA) {
 ## --------------------------------------------------------------------------
 ## 4. Upstream fetching
 ## --------------------------------------------------------------------------
+##
+## Adding a new source (e.g., r-universe, custom CRAN mirror):
+##
+## 1. repos.json: add a new top-level key with a URL template, and reference
+##    it in each version block (like "rspm" and "jasp-repo").
+##
+## 2. validate_config(): add the new key to the required list if mandatory.
+##
+## 3. Write a fetch_<source>() function that returns entries in the same
+##    format (list of lists with Package, Version, raw, vkey, origin, priority).
+##    Set `origin` to a unique string and `priority` to rank it against others
+##    (lower wins ties).
+##
+## 4. get_merged() and get_merged_binary(): add the new fetch call to the
+##    merge_entries(...) arguments.  If the source provides binaries, include
+##    it in get_merged_binary(); if source-only, get_merged() only.
+##
+## 5. stream_binary(): add a fallback block that constructs the URL for the
+##    new source's binary format and handles any conversion needed.
+##
+## 6. If the source serves source tarballs, add a similar fallback in
+##    stream_source().
+##
+## 7. handle_prime / classification: if the new source has a distinct package
+##    format or metadata, update make_external_entry() or the classification
+##    logic in handle_prime().
 
 ## Fetch a URL into memory (no disk). Returns list(status, content_type, body[raw]).
 fetch_upstream <- function(url, headers = character()) {
@@ -482,6 +508,23 @@ get_merged <- function(version) {
           "' (rspm_src=", length(rspm_src),
           " rspm_bin=", length(rspm_bin),
           " jasp=",     length(jasp), ")")
+  merged
+}
+
+## Binary-only merge: serves binary PACKAGES (RSPM binaries + jasp-repo).
+## Separate from the full merge so /bin/.../PACKAGES shows the highest
+## installable binary version, not the source version — matching CRAN.
+get_merged_binary <- function(version) {
+  cache <- .repo_server_state$merged_cache
+  key   <- paste0(version, "__bin")
+  if (!is.null(cache[[key]])) return(cache[[key]])
+
+  rspm_bin <- fetch_rspm_binary(version)
+  jasp     <- scrape_jasp(version)
+  merged   <- merge_entries(rspm_bin, jasp)
+
+  cache[[key]] <- merged
+  message("[repo_server] binary merge ", length(merged), " packages for version '", version, "'")
   merged
 }
 
@@ -725,36 +768,31 @@ stream_binary <- function(sess, filename) {
   if (!is.null(cache_file) && file.exists(cache_file))
     return(serve_cached_file(cache_file))
 
-  # 2. Fetch + cache (and convert if jasp-repo).
-  if (entry$origin == "rspm") {
-    # RSPM binary — already in the format R expects.
-    url <- paste0(rspm_base_url(sess$version), "/bin/", bp, "/", filename)
-    resp <- tryCatch(fetch_upstream(url),
-                     error = function(e) list(status = 502L, body = charToRaw(conditionMessage(e))))
-    if (resp$status == 404L) return(not_found("Upstream 404: ", url))
-    if (resp$status >= 400L) return(json_response(list(error = paste0("Upstream HTTP ", resp$status)), resp$status))
+  # 2. Search all binary sources for this file.
+  # RSPM binary first, then jasp-repo.  404 if not found anywhere.
+
+  # Try RSPM binary.
+  url <- paste0(rspm_base_url(sess$version), "/bin/", bp, "/", filename)
+  resp <- tryCatch(fetch_upstream(url),
+                   error = function(e) list(status = 502L, body = charToRaw(conditionMessage(e))))
+  if (resp$status == 200L) {
     write_cached_binary(cache_file, resp$body)
     return(raw_response(resp$body, content_type_for(filename)))
+  }
 
-  } else if (entry$origin == "jasp-repo") {
-    # jasp-repo binary — download as .tar.gz, convert to target format.
-    # jasp-repo always serves .tar.gz regardless of platform.
-    jasp_filename <- paste0(pkg, "_", entry$Version, ".tar.gz")
-    url <- paste0(jasp_url(sess$version), "/", jasp_filename)
-    resp <- tryCatch(fetch_upstream(url),
-                     error = function(e) list(status = 502L, body = charToRaw(conditionMessage(e))))
-    if (resp$status == 404L) return(not_found("Upstream 404: ", url))
-    if (resp$status >= 400L) return(json_response(list(error = paste0("Upstream HTTP ", resp$status)), resp$status))
-
-    # Convert: decompress (auto-detected by libarchive), wrap in pkgname/, re-archive.
+  # Fall back to jasp-repo.
+  jasp_filename <- paste0(pkg, "_", entry$Version, ".tar.gz")
+  url <- paste0(jasp_url(sess$version), "/", jasp_filename)
+  resp <- tryCatch(fetch_upstream(url),
+                   error = function(e) list(status = 502L, body = charToRaw(conditionMessage(e))))
+  if (resp$status == 200L) {
     converted <- convert_binary(resp$body, pkg, filename)
     write_cached_binary(cache_file, converted)
     return(raw_response(converted, content_type_for(filename)))
-
-  } else {
-    # external packages are source-only -> 404 so R falls back to source
-    return(not_found("No binary for source-only package: ", pkg))
   }
+
+  # No binary found anywhere — R falls back to source.
+  return(not_found("No binary for: ", pkg, " (", filename, ")"))
 }
 
 ## Resolve + stream a SOURCE tarball for a primed session.
@@ -824,7 +862,8 @@ resp_health <- function() {
 resp_version_packages <- function(version, kind) {
   v <- resolve_version(version)
   if (is.null(v)) return(not_found("Unknown version: ", version))
-  text_response(serialize_packages(get_merged(v)))
+  merged <- if (kind == "bin") get_merged_binary(v) else get_merged(v)
+  text_response(serialize_packages(merged))
 }
 
 ## POST /prime -> classify a lockfile and create a session.
@@ -934,12 +973,9 @@ handle_primed <- function(req, method, session_id, rest) {
   # .../bin/<path>/PACKAGES[.gz]  OR  .../bin/<path>/{pkg}_{ver}.{tgz,tar.gz,zip}
   if (rest[1L] == "bin") {
     last <- rest[length(rest)]
-    # Always serve plain text — R's download.file on Windows doesn't
-    # decompress HTTP Content-Encoding, and .gz with text/plain confuses
-    # read.dcf().  The .gz suffix is a CRAN convention we don't need
-    # on a local server.
     if (last == "PACKAGES" || last == "PACKAGES.gz")
       return(resp_scoped_packages(sess))
+        return(resp_scoped_packages(sess, binary_only = TRUE))
     return(stream_binary(sess, last))
   }
 
