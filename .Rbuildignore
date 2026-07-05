@@ -3,4 +3,6 @@
 ^build_lib$
 ^bundles$
 ^jasp_server_cache$
+^build_lib_.*$
+^build_all.*\.log$
 ^jasp_dev_work_dir$

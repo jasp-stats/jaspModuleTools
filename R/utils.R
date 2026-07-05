@@ -187,13 +187,19 @@ ensure_repo_server <- function(version = "latest", config_url = NULL,
   server_path <- normalizePath(server_script, winslash = "/", mustWork = TRUE)
   config_path <- normalizePath(config_file,   winslash = "/", mustWork = TRUE)
 
+  # Build extra args for start_repo_server (options don't survive system()).
+  extra_args <- ""
+  if (!is.null(pat) && nzchar(pat))
+    extra_args <- paste0(extra_args, sprintf(', github_pat = "%s"', pat))
+  cp <- getOption("jasp.repo_cache_path")
+  if (!is.null(cp))
+    extra_args <- paste0(extra_args, sprintf(', cache_path = "%s"', normalizePath(cp, winslash = "/", mustWork = FALSE)))
+
   args <- c(
     sprintf('cat(Sys.getpid(), file = "%s")', normalizePath(tmp_pidfile, winslash = "/", mustWork = FALSE)),
     sprintf('source("%s")', server_path),
-    sprintf('start_repo_server(config_url = "%s", port = %dL%s%s)',
-            config_path, port,
-            if (is.null(pat) || !nzchar(pat)) "" else sprintf(', github_pat = "%s"', pat),
-            ""),
+    sprintf('start_repo_server(config_url = "%s", port = %dL%s)',
+            config_path, port, extra_args),
     'while (TRUE) { httpuv::service(200); Sys.sleep(0.01) }'
   )
 
