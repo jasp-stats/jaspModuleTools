@@ -199,12 +199,15 @@ resolve_platform <- function(os = NULL, arch = NULL, r_version = NULL, distro = 
     r_version <- paste0(rv$major, ".", minor_first)
   }
 
-  # macos platform subdir: only for R >= 4.3 on macOS.
-  # Compare version components directly (NOT major + minor/100, which turns
-  # 4.5 into 4.05 and breaks the >= 4.3 test).
+  # macOS platform subdir: derive from R's own pkgType (R 4.3+).
+  # R 4.3-4.5 uses "big-sur-{arch}", R 4.6+ uses "sonoma-{arch}".
+  # contrib.url("", "binary") returns e.g. "bin/macosx/big-sur-arm64/contrib/4.5"
+  # — we strip the leading "bin/".
   macos_platform <- NULL
-  if (os == "MacOS" && utils::compareVersion(r_version, "4.3") >= 0)
-    macos_platform <- paste0("big-sur-", arch)
+  if (os == "MacOS" && utils::compareVersion(r_version, "4.3") >= 0) {
+    cu <- utils::contrib.url("", type = "binary")
+    macos_platform <- sub("^bin/macosx/", "", sub("/contrib/.*", "", cu))
+  }
 
   # jasp-repo uses its own os labels (matches the legacy getRemoteCellarURLs)
   jasp_os <- os
