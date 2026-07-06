@@ -564,7 +564,9 @@ make_external_entry <- function(rec) {
 }
 
 ## Parse the package name out of a tarball/zip filename: "ggplot2_3.5.1.tar.gz".
+## Handles Path: subdirectories: "Transit/Rcpp_1.1.1-1.tar.gz" -> "Rcpp".
 pkg_name_from_filename <- function(filename) {
+  filename <- basename(filename)
   stem <- sub(r"{\.(tar\.gz|tgz|tar\.bz2|zip)$}", "", filename, ignore.case = TRUE)
   pos <- regexpr("_[^_]+$", stem)
   if (pos < 0L) return(stem)
@@ -1002,15 +1004,19 @@ handle_primed <- function(req, method, session_id, rest) {
   if (length(rest) < 1L)
     return(not_found("Incomplete primed path"))
 
-  # .../src/contrib/PACKAGES[.gz]  OR  .../src/contrib/{pkg}_{ver}.tar.gz
+  # .../src/contrib/PACKAGES[.gz]
+  # .../src/contrib/{pkg}_{ver}.tar.gz
+  # .../src/contrib/{Path}/{pkg}_{ver}.tar.gz   (CRAN Path: field)
   if (length(rest) >= 3L && rest[1L] == "src" && rest[2L] == "contrib") {
-    target <- rest[3L]
+    target <- paste(rest[-(1:2)], collapse = "/")
     if (target == "PACKAGES" || target == "PACKAGES.gz")
       return(resp_scoped_packages(sess))
     return(stream_source(sess, target))
   }
 
-  # .../bin/<path>/PACKAGES[.gz]  OR  .../bin/<path>/{pkg}_{ver}.{tgz,tar.gz,zip}
+  # .../bin/<path>/PACKAGES[.gz]
+  # .../bin/<path>/{pkg}_{ver}.{tgz,tar.gz,zip}
+  # .../bin/<path>/{Path}/{pkg}_{ver}.{tgz,tar.gz,zip}  (CRAN Path: field)
   if (rest[1L] == "bin") {
     last <- rest[length(rest)]
     if (last == "PACKAGES" || last == "PACKAGES.gz") {
@@ -1020,7 +1026,14 @@ handle_primed <- function(req, method, session_id, rest) {
       bin_entries <- sess$scoped[sess$classification$binary]
       return(text_response(serialize_packages(bin_entries)))
     }
-    return(stream_binary(sess, last))
+    # Reconstruct filename with Path: subdirectory if present.
+    # bin/<os>/<platform>/contrib/<rver>/[Path/]pkg_ver.ext
+    ci <- match("contrib", rest)
+    target <- if (!is.na(ci) && ci + 1L < length(rest))
+      paste(rest[-(1:(ci + 1L))], collapse = "/")
+    else
+      last
+    return(stream_binary(sess, target))
   }
 
   not_found("No primed route for: ", paste(rest, collapse = "/"))
