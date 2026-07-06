@@ -2,11 +2,28 @@
 
 
 getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
-  old_repos <- getOption("repos")
-    if (!is.null(repos)) {
-      options(repos = c(CRAN = repos))
-      on.exit(options(repos = old_repos), add = TRUE)
-    }
+    # pkgdepends internally merges repos from getOption("repos") AND its
+    # cran_mirror config.  Worse, it caches CRAN metadata via pkgcache and
+    # loads stale versions (e.g. rvg 0.4.2 from a previous default-CRAN
+    # resolution) even when pointed at our pinned RSPM snapshot.  We solve
+    # both problems:
+    #   1. options(repos = NULL) — prevents pkgdepends from reading R's repos
+    #   2. A FRESH empty metadata cache dir — no stale CRAN data leaks in
+    #   3. use_bioconductor = FALSE — no Bioconductor repos added
+    old_repos <- getOption("repos")
+    old_pkg_cran <- getOption("pkg.cran_mirror")
+    options(repos = NULL)
+    if (!is.null(repos))
+      options(pkg.cran_mirror = repos)
+    on.exit({
+      options(repos = old_repos)
+      if (is.null(old_pkg_cran)) {
+        .Options$pkg.cran_mirror <- NULL
+      } else {
+        options(pkg.cran_mirror = old_pkg_cran)
+      }
+    }, add = TRUE)
+
     # Point pkgdepends at an empty library so it never sees locally
     # installed packages during resolution — forces everything through
     # the repo (the pinned RSPM snapshot).
@@ -16,7 +33,13 @@ getRecordsFromPkgdepends <- function(modulePkg, repos = NULL) {
     pkg_ref <- if (startsWith(modulePkg, "/") || grepl("^[A-Z]:", modulePkg))
       modulePkg else paste0('./', modulePkg)
 
-    pd <- pkgdepends::new_pkg_deps(pkg_ref, config = list(library = empty_lib))
+    pd <- pkgdepends::new_pkg_deps(pkg_ref, config = list(
+      library              = empty_lib,
+      cran_mirror          = repos,
+      use_bioconductor     = FALSE,
+      metadata_cache_dir   = tempfile("jasp_pkgcache"),
+      metadata_update_after = as.difftime(0, units = "secs")
+    ))
     pd$set_solve_policy(policy = "upgrade")
     pd$solve()
     pd$stop_for_solution_error()
