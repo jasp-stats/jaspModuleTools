@@ -51,8 +51,11 @@ start_jasp_development <- function(update_lockfile = FALSE,
 #' @param moduledir Path to the module root (default "./").
 #' @param update_lockfile If TRUE, refresh renv.lock before building.
 #'   A lockfile is always created if it does not exist.
-#' @param build_bundle If TRUE, create a .JASPModule bundle and clean up
-#'   the build library afterwards.
+#' @param build_bundle If TRUE, create a .JASPModule bundle.
+#' @param clean If TRUE and build_bundle is TRUE, delete build_lib after
+#'   bundling (since the bundle contains everything). Default FALSE.
+#' @param relink If TRUE (default), copy build_lib to a `_jasp`-suffixed
+#'   directory and run fix_mac_linking (macOS only). Set FALSE for CI.
 #' @param library Path to the isolated package library.  Defaults to the
 #'   JASP_PKG_LIBRARY env var (set by start_jasp_development()), falling
 #'   back to "./build_lib".
@@ -60,6 +63,8 @@ start_jasp_development <- function(update_lockfile = FALSE,
 build <- function(moduledir = "./",
                   update_lockfile = FALSE,
                   build_bundle    = FALSE,
+                  relink          = TRUE,
+                  clean           = FALSE,
                   library         = NULL) {
   # ---- resolve library path ----
   build_lib <- library
@@ -191,21 +196,24 @@ build <- function(moduledir = "./",
     )
   })
 
-  # ---- macOS linking fix ----
-  if (Sys.info()["sysname"] == "Darwin") {
-    fix_mac_linking(build_lib)
-  }
-
-  # ---- print path for JASP ----
+  # ---- macOS relink + codesign ----
   module_name <- read.dcf(fs::path(moduledir, "DESCRIPTION"))[1, "Package"]
-  cat("\nJASP module library:", normalizePath(build_lib))
-  cat("\nJASP module:", module_name, "\n\n")
+  final_lib <- build_lib
+
+  if (relink && Sys.info()["sysname"] == "Darwin") {
+    linked <- fs::path(dirname(build_lib), paste0(basename(build_lib), "_jasp"))
+    message("[jaspModuleTools] Relinking + codesign: ", linked)
+    if (fs::dir_exists(linked)) fs::dir_delete(linked)
+    fs::dir_copy(build_lib, linked, overwrite = TRUE)
+    fix_mac_linking(linked)
+    final_lib <- linked
+  }
 
   # ---- optional bundle ----
   if (build_bundle) {
     resultdir <- fs::dir_create("./bundles")
     jaspModuleBundleManager::createJaspModuleBundle(
-      moduleLib        = build_lib,
+      moduleLib        = final_lib,
       moduleName       = module_name,
       resultdir        = resultdir,
       packageAll       = TRUE,
@@ -213,9 +221,22 @@ build <- function(moduledir = "./",
       repoNames        = c(version)
     )
     message("[jaspModuleTools] Bundle created in ", resultdir)
+
+    if (clean) {
+      if (!identical(normalizePath(build_lib), normalizePath(final_lib))) {
+        # final_lib is the _jasp copy — delete the original too
+        message("[jaspModuleTools] Cleaning build library: ", build_lib)
+        fs::dir_delete(build_lib)
+      }
+      message("[jaspModuleTools] Cleaning build library: ", final_lib)
+      fs::dir_delete(final_lib)
+    }
   }
 
-  invisible(build_lib)
+  cat("\nJASP module library:", normalizePath(final_lib))
+  cat("\nJASP module:", module_name, "\n\n")
+
+  invisible(final_lib)
 }
 
 
