@@ -152,6 +152,17 @@ build <- function(moduledir = "./",
       # Source-only packages (GitHub remotes) — skip already installed.
       # Installed one at a time in dependency order (sorted above).
       src_pkgs <- setdiff(src_pkgs, installed)
+      # Also retry any binary packages that failed to install (e.g. RSPM
+      # binary index lists a package but the .tgz/.zip returns 404 — common
+      # on macOS arm64 for packages requiring compilation like gdtools, rvg).
+      just_installed <- rownames(utils::installed.packages(lib.loc = lib))
+      failed_binaries <- setdiff(bin_pkgs, just_installed)
+      if (length(failed_binaries)) {
+        message("Retrying ", length(failed_binaries),
+                " failed binary package(s) as source: ",
+                paste(failed_binaries, collapse = ", "))
+        src_pkgs <- union(src_pkgs, failed_binaries)
+      }
       for (pkg in src_pkgs)
         install.packages(pkg, lib = lib, repos = repo, type = "source")
       # Module itself — fail the build if it doesn't install.
@@ -161,6 +172,13 @@ build <- function(moduledir = "./",
       module_name <- read.dcf(file.path(mod, "DESCRIPTION"))[1, "Package"]
       if (!module_name %in% rownames(utils::installed.packages(lib.loc = lib)))
         stop("Module ", module_name, " failed to install")
+      # Verify ALL lockfile packages installed successfully.
+      all_pkgs <- union(bin_pkgs, src_pkgs)
+      final_installed <- rownames(utils::installed.packages(lib.loc = lib))
+      missing <- setdiff(all_pkgs, final_installed)
+      if (length(missing))
+        stop("Failed to install ", length(missing), " package(s): ",
+             paste(missing, collapse = ", "))
       TRUE
     }, args = list(bin_pkgs = binary_pkgs, src_pkgs = source_only,
                    mod = moduledir_abs,

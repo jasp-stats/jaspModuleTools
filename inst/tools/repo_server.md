@@ -17,20 +17,20 @@ streamed straight to R without touching disk.
 
 ```mermaid
 flowchart TD
-    R["R session\ninstall.packages / pkgdepends"]
+    R["R session<br>install.packages / pkgdepends"]
 
     subgraph Local["Local repo server - httpuv port 8765"]
         direction TB
         Router["Request router"]
-        Merge["Merged PACKAGES\nin-memory, lazy + cached"]
-        Sessions["Session map\nin-memory"]
-        Streamer["Streaming proxy\nfetch upstream then pipe to client"]
+        Merge["Merged PACKAGES<br>in-memory, lazy + cached"]
+        Sessions["Session map<br>in-memory"]
+        Streamer["Streaming proxy<br>fetch upstream then pipe to client"]
     end
 
     subgraph Upstreams["Frozen upstream sources"]
-        RSPM["RSPM\npackagemanager.posit.co/cran/{date}\nCRAN packages: source + binaries"]
-        JASP["jasp-repo\nrepo.jasp-stats.org/{ver}/{R-ver}/{os}/{arch}\nJASP internal packages"]
-        GH["GitHub\napi.github.com/repos/.../tarball/{sha}\nExternal source fallback"]
+        RSPM["RSPM<br>packagemanager.posit.co/cran/{date}<br>CRAN packages: source + binaries"]
+        JASP["jasp-repo<br>repo.jasp-stats.org/{ver}/{R-ver}/{os}/{arch}<br>JASP internal packages"]
+        GH["GitHub<br>api.github.com/repos/.../tarball/{sha}<br>External source fallback"]
     end
 
     R -- "HTTP: PACKAGES + tarballs" --> Router
@@ -89,7 +89,7 @@ flowchart TD
     Check -- Yes --> Cmp["Compare versions"]
     Cmp -- "new greater than existing" --> Replace["Replace with new entry"]
     Cmp -- "new less than existing" --> Keep["Keep existing entry"]
-    Cmp -- "versions equal" --> Tie["Lower priority number wins\nRSPM=1, jasp=2, external=3"]
+    Cmp -- "versions equal" --> Tie["Lower priority number wins<br>RSPM=1, jasp=2, external=3"]
     Insert --> Done["Next package"]
     Replace --> Done
     Keep --> Done
@@ -132,14 +132,14 @@ flowchart TD
     Flat --> FlatArch["arch = arm64 or x86_64"]
 
     MacArch --> MacBP{"R >= 4.3?"}
-    MacBP -- Yes --> MacPath["binary_path =\nmacosx/big-sur-{arch}/contrib/{r_ver}"]
-    MacBP -- No --> MacLegacy["binary_path =\nmacosx/contrib/{r_ver}"]
+    MacBP -- Yes --> MacPath["binary_path =<br>macosx/big-sur-{arch}/contrib/{r_ver}"]
+    MacBP -- No --> MacLegacy["binary_path =<br>macosx/contrib/{r_ver}"]
 
-    WinArch --> WinPath["binary_path =\nwindows/contrib/{r_ver}"]
+    WinArch --> WinPath["binary_path =<br>windows/contrib/{r_ver}"]
 
     LinArch --> LinDistro{"distro set?"}
-    LinDistro -- Yes --> LinPath["binary_path =\nlinux/{distro}-{arch}/contrib/{r_ver}"]
-    LinDistro -- No --> LinSource["binary_path = NULL\nsource-only: try/404/fallback"]
+    LinDistro -- Yes --> LinPath["binary_path =<br>linux/{distro}-{arch}/contrib/{r_ver}"]
+    LinDistro -- No --> LinSource["binary_path = NULL<br>source-only: try/404/fallback"]
     FlatArch --> LinSource
 ```
 
@@ -208,24 +208,34 @@ Submits a lockfile; the server classifies packages and creates a scoped session.
 }
 ```
 
+| Field | Type | Description |
+|-------|------|-------------|
+| `session` | string (12 chars) | Random alphanumeric session ID |
+| `repo_url` | string | Base URL for `install.packages(type="binary")` |
+| `package_count` | integer | Number of packages in scoped PACKAGES (binary + source_only) |
+| `binary` | integer | **Count** of packages classified as binary — not a list of names |
+| `source_only` | string[] | Package names to install from source |
+| `not_found` | string[] | Package names with no install path |
+
 **Classification buckets:**
 
-| Bucket | Criterion | PACKAGES included? |
-|--------|-----------|--------------------|
-| `binary` | Found in a pinned source (RSPM / jasp-repo) | Yes (merged entry) |
-| `source_only` | Not in pinned sources, but lockfile has source info (GitHub SHA / Repository URL) | Yes (external entry + remote metadata) |
-| `not_found` | Not in pinned sources AND no source info | No (returned so client can warn) |
+| Bucket | Criterion | Scoped PACKAGES |
+|--------|-----------|-----------------|
+| `binary` | **Exact version** match in RSPM binary index or jasp-repo binary index | Merged DCF entry, Version pinned to lockfile |
+| `source_only` | No binary match, but either: (a) record has source info (GitHub SHA / Repository URL), **or** (b) package exists in the merged index (known to a pinned source) | (a) External entry with remote metadata, or (b) merged DCF entry with Version pinned to lockfile |
+| `not_found` | No binary match, no source info, and not in merged index | Excluded (returned so client can warn) |
+
+> **Classification is based on binary indexes, not the full merged index.**
+> RSPM binary PACKAGES and jasp-repo directory listing are fetched fresh per
+> prime request; the merged index is only used as a fallback for packages that
+> have no binary match and no source info.
 
 #### Scoped PACKAGES
 
-| Method | Path |
-|--------|------|
-| `GET` | `/primed/{session}/src/contrib/PACKAGES` |
-| `GET` | `/primed/{session}/bin/{binary_path}/PACKAGES` |
-
-Contains **every** lockfile package (`binary` + `source_only`), excluding
-`not_found`. Each entry carries `Package` + `Version`; source-only entries also
-carry remote metadata (`RemoteType`, `RemoteSha`, etc.).
+| Method | Path | Contents |
+|--------|------|----------|
+| `GET` | `/primed/{session}/src/contrib/PACKAGES` | **All installable** lockfile packages (`binary` + `source_only`; `not_found` excluded). Binary entries use merged DCF (Version patched to lockfile); source_only entries carry external metadata or patched-version merged DCF. |
+| `GET` | `/primed/{session}/bin/{binary_path}/PACKAGES` | **Binary-classified packages only.** `source_only` packages are excluded — R would try binary → 404 → skip instead of falling back to source. |
 
 #### Streaming tarball endpoints
 
@@ -257,7 +267,7 @@ All HTTP requests pass through a single `handle_request()` dispatcher:
 
 ```mermaid
 flowchart TD
-    Req["Incoming request\nmethod + path"] --> Parse["Parse path into segments"]
+    Req["Incoming request<br>method + path"] --> Parse["Parse path into segments"]
     Parse --> Health{"/health GET?"}
     Health -- Yes --> H["resp_health()"]
     Health -- No --> Prime{"/prime POST?"}
@@ -289,23 +299,25 @@ sequenceDiagram
     R->>S: POST /prime { lockfile JSON }
     S->>S: get_merged(version) [cached]
     S->>S: classify packages
-    Note right of S: binary: found in merged\nsource_only: has GitHub/Repo info\nnot_found: neither
+    Note right of S: binary: exact version in binary indexes
+    Note right of S: source_only: has source info or in merged
+    Note right of S: not_found: neither
     S-->>R: { session, repo_url, classification }
 
     Note over R,S: 3. Install from the primed repo
     R->>S: GET /primed/{sid}/bin/.../PACKAGES
-    S-->>R: scoped PACKAGES (all lockfile pkgs)
+    S-->>R: scoped PACKAGES (binary only)
 
     loop For each package R installs
         R->>S: GET /primed/{sid}/bin/.../{pkg}_{ver}.tgz
         alt Binary available upstream
             S->>U: fetch binary (RSPM or jasp-repo)
             U-->>S: binary bytes
-            S-->>R: stream bytes (no disk)
+            S-->>R: stream bytes (cache on write)
         else Binary 404 (e.g. source-only pkg)
             S-->>R: 404
             R->>S: GET /primed/{sid}/src/contrib/{pkg}_{ver}.tar.gz
-            S->>U: fetch source (RSPM / jasp-repo / GitHub)
+            S->>U: fetch source (GitHub / external repo / RSPM)
             U-->>S: source bytes
             S-->>R: stream bytes
         end
@@ -322,14 +334,14 @@ The merged index is built lazily on first access for a version, then cached:
 
 ```mermaid
 flowchart TD
-    Req["Request for\n/{version}/.../PACKAGES"] --> Resolve["resolve_version()\n(latest maps to configured key)"]
+    Req["Request for<br>/{version}/.../PACKAGES"] --> Resolve["resolve_version()<br>(latest maps to configured key)"]
     Resolve --> Cached{"Merged index in cache?"}
     Cached -- Yes --> Serve["Serialize entries to PACKAGES text"]
     Cached -- No --> Build["Build merged index"]
-    Build --> Src["Fetch RSPM source PACKAGES\n/src/contrib/PACKAGES"]
-    Build --> Bin["Fetch RSPM binary PACKAGES\n/bin/{binary_path}/PACKAGES\n(404 on Linux means skip)"]
-    Build --> Jasp["Scrape jasp-repo directory\nparse filenames to minimal entries"]
-    Src --> Merge["Merge: highest version wins\nRSPM beats jasp-repo on tie"]
+    Build --> Src["Fetch RSPM source PACKAGES<br>/src/contrib/PACKAGES"]
+    Build --> Bin["Fetch RSPM binary PACKAGES<br>/bin/{binary_path}/PACKAGES<br>(404 on Linux means skip)"]
+    Build --> Jasp["Scrape jasp-repo directory<br>parse filenames to minimal entries"]
+    Src --> Merge["Merge: highest version wins<br>RSPM beats jasp-repo on tie"]
     Bin --> Merge
     Jasp --> Merge
     Merge --> Cache["Store in merged_cache"]
@@ -344,21 +356,21 @@ libarchive, wrap in pkgname/, re-archive as gzip tgz/zip), then cached.
 
 ```mermaid
 flowchart TD
-    Req["R requests binary\n{pkg}_{ver}.{ext}"] --> Lookup["Look up pkg in session"]
+    Req["R requests binary<br>{pkg}_{ver}.{ext}"] --> Lookup["Look up pkg in session"]
     Lookup --> Found{"Found?"}
     Found -- No --> NF404["404 Not Found"]
     Found -- Yes --> Cache{"In binary cache?"}
     Cache -- Yes --> ServeCache["Serve from disk cache"]
     Cache -- No --> BOrigin{"Package origin?"}
 
-    BOrigin -- rspm --> BFetch["Download from RSPM\n(already correct format)"]
+    BOrigin -- rspm --> BFetch["Download from RSPM<br>(already correct format)"]
     BFetch --> BWrite["Write to cache"]
 
-    BOrigin -- "jasp-repo" --> JFetch["Download .tar.gz\n(zstd, no wrapper dir)"]
-    JFetch --> Convert["Convert via libarchive:\nextract, wrap in pkgname/\nre-archive as gzip tgz or zip"]
+    BOrigin -- "jasp-repo" --> JFetch["Download .tar.gz<br>(zstd, no wrapper dir)"]
+    JFetch --> Convert["Convert via libarchive:<br>extract, wrap in pkgname/<br>re-archive as gzip tgz or zip"]
     Convert --> JWrite["Write converted to cache"]
 
-    BOrigin -- external --> B404["404 source-only\nR falls back to source"]
+    BOrigin -- external --> B404["404 source-only<br>R falls back to source"]
     BWrite --> Serve["Stream to R"]
     JWrite --> Serve
     ServeCache --> Serve
@@ -366,23 +378,27 @@ flowchart TD
 
 ### 5.5 Source streaming
 
-Source requests resolve the upstream URL by origin. jasp-repo packages are
-**binary-only** — source requests return 404.
+Source requests resolve the upstream URL by origin. For GitHub packages the
+git tarball is used exclusively; for others RSPM source is tried first with
+a live CRAN fallback. jasp-repo packages that end up in `source_only` are
+treated as CRAN packages (step 3) — they'll 404 unless they happen to exist
+on CRAN.
 
 ```mermaid
 flowchart TD
-    Req["R requests source\n{pkg}_{ver}.tar.gz"] --> Lookup["Look up pkg in session"]
+    Req["R requests source<br>{pkg}_{ver}.tar.gz"] --> Lookup["Look up pkg in session"]
     Lookup --> Found{"Found?"}
     Found -- No --> NF404["404 Not Found"]
     Found -- Yes --> SOrigin{"Package origin?"}
 
-    SOrigin -- rspm --> SUrl["URL = RSPM/src/contrib/{filename}"]
-    SOrigin -- "jasp-repo" --> S404["404 binary-only\nno source available"]
-    SOrigin -- external --> SGit{"Has GitHub RemoteSha?"}
-    SGit -- Yes --> GitUrl["URL = api.github.com/.../tarball/{sha}\n+ Authorization: Bearer {PAT}"]
-    SGit -- No --> RepoUrl["URL = {Repository}/src/contrib/{filename}"]
+    SOrigin -- "GitHub<br>(has RemoteSha)" --> GitUrl["URL = api.github.com/.../tarball/{sha}<br>+ Authorization: Bearer {PAT}<br>(exclusive — no fallback)"]
+    SOrigin -- "External repo<br>(has Repository URL)" --> RepoUrl["URL = {Repository}/src/contrib/{filename}"]
+    SOrigin -- "CRAN / jasp-repo / other" --> CRAN["Try RSPM source:<br>{rspm_base_url}/src/contrib/{filename}"]
+    CRAN --> CRANOk{"200?"}
+    CRANOk -- Yes --> Stream["Stream to R"]
+    CRANOk -- No --> LiveCRAN["Fallback: cloud.r-project.org<br>/src/contrib/{filename}"]
+    LiveCRAN --> Stream
 
-    SUrl --> Stream["fetch_upstream and stream"]
     GitUrl --> Stream
     RepoUrl --> Stream
 ```
@@ -412,10 +428,10 @@ or `utils::zip()` for Windows binaries.
 stateDiagram-v2
     [*] --> Created: POST /prime
     note right of Created
-        Scoped PACKAGES built from:
-        - binary (merged index)
-        - source_only (external entries)
-        Held in session map.
+      Scoped PACKAGES built from:
+      - binary (merged entry, lockfile version)
+      - source_only (external entries or merged, lockfile version)
+      Held in session map.
     end note
     Created --> Streaming: GET /primed/{sid}/...
     Streaming --> Streaming: more requests

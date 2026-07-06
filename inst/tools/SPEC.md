@@ -11,8 +11,9 @@
 > - r-universe source **dropped** (deferred — requires snapshot-publishing infra;
 >   currently builds only one package, failing). Revisit later.
 > - RSPM binary paths **verified** against `packagemanager.posit.co`.
-> - **Caching removed** — server is now a pure streaming proxy. No disk writes
->   for binaries; everything is fetched on demand and streamed to R.
+> - **Binary caching is optional (opt-in).** Set `cache_path` or
+>   `options(jasp.repo_cache_path)` to enable on-disk caching. Without it, every
+>   binary is re-fetched from upstream on each build.
 > - Merge rule **clarified**: highest version wins; source priority breaks ties only.
 > - jasp-repo PACKAGES built from directory listing (name + version from filename).
 >   A real PACKAGES file will be published upstream in a future revision.
@@ -99,10 +100,12 @@ are fetched and served:
 
 Default: `http://localhost:8765`
 
-**Pure streaming proxy.** The server holds only in-memory metadata (merged
-PACKAGES + session map). It never writes binaries to disk — every binary/source
+**Streaming proxy with optional binary caching.** The server holds only in-memory
+metadata (merged PACKAGES + session map). By default, every binary/source
 request fetches from upstream and streams the bytes directly to R's HTTP client.
-R writes to its own `tempdir()` during `install.packages()` as usual.
+If a `cache_path` is configured (via param or `options(jasp.repo_cache_path)`),
+binaries are cached on disk after first download — subsequent builds reuse the
+cached files. R writes to its own `tempdir()` during `install.packages()` as usual.
 
 The server's in-memory state lives for the duration of the R session that started
 it. When that R session exits, the server and all sessions die. No persistence,
@@ -177,20 +180,20 @@ packages, then streams binaries on demand.
 
 **Package classification on `/prime`:**
 
-The server checks each package in the lockfile against the merged index. Packages
-fall into three buckets:
+The server classifies each lockfile package by checking the RSPM and jasp-repo
+**binary** indexes (fetched fresh per prime, not the merged index):
 
 | Bucket | Meaning |
 |--------|---------|
-| **binary** | Found in a pinned source (jasp-repo / RSPM). Binary will be streamed. |
-| **source_only** | Not in any pinned source, but the lockfile provides enough info to fetch a source tarball (e.g. `Source: "GitHub"` with `RemoteSha`, or `Source: "Repository"` with a `Repository` URL). The server includes it in the scoped PACKAGES. R will request the source `.tar.gz`, the server fetches from the original location, and R compiles locally. |
-| **not_found** | Not in any pinned source AND no source info to fall back on. Listed so the client can abort or warn. |
+| **binary** | A **binary** with the **exact lockfile version** exists in RSPM binary PACKAGES or jasp-repo. Binary will be streamed from the upstream source. |
+| **source_only** | No matching binary found. Classified as source_only if: (a) the lockfile record has enough info to fetch a source tarball (`Source: "GitHub"` with `RemoteSha`/`RemoteRef`, or `Source: "Repository"` with a `Repository` URL), **or** (b) the package exists in the merged index (i.e. known to at least one pinned source) — in which case the scoped PACKAGES carries the merged entry with the lockfile's version. |
+| **not_found** | No matching binary, no source info, and not present in the merged index at all. Returned so the client can abort or warn. |
 
 **Response:**
 ```json
 {
-  "session": "a3f8c2d1",
-  "repo_url": "http://localhost:8765/primed/a3f8c2d1",
+  "session": "a3F8c2D1e9B4",
+  "repo_url": "http://localhost:8765/primed/a3F8c2D1e9B4",
   "package_count": 47,
   "binary": 43,
   "source_only": ["randomGithubPkg", "obscureForksPkg"],
@@ -198,38 +201,72 @@ fall into three buckets:
 }
 ```
 
+| Field | Type | Description |
+|-------|------|-------------|
+| `session` | string (12 chars) | Random alphanumeric session ID |
+| `repo_url` | string | Base URL for install.packages(type="binary") |
+| `package_count` | integer | Number of packages in the scoped PACKAGES (binary + source_only) |
+| `binary` | integer | Count of packages classified as binary |
+| `source_only` | string[] | Package names that must be installed from source |
+| `not_found` | string[] | Package names with no install path at all |
+
 #### `GET /primed/{session}/src/contrib/PACKAGES`
 
-Scoped DCF containing **all** packages from the lockfile — both `binary` and
-`source_only`. For `source_only` packages, the PACKAGES entry carries the remote
-metadata (`RemoteType`, `RemoteSha`, etc.) so R can locate and fetch the source.
+Scoped DCF containing **every installable** lockfile package (`binary` +
+`source_only`; `not_found` packages are excluded).
+
+- **binary** entries use the **merged** DCF block with the Version field patched
+to match the lockfile's pinned version.
+- **source_only with source info** (GitHub/Repository) carry the full remote
+metadata (`RemoteType`, `RemoteSha`, `RemoteRef`, `Repository`, etc.).
+- **source_only without source info** (present in merged index but no exact binary
+match) use the merged DCF block with the Version patched to the lockfile version.
+
+#### `GET /primed/{session}/bin/{binary_path}/PACKAGES`
+
+Scoped DCF containing **only** packages classified as `binary`. `source_only`
+packages are excluded — R would try binary, get 404, and skip them instead of
+falling back to source.
 
 #### `GET /primed/{session}/bin/{binary_path}/{pkg}_{ver}.{tgz,tar.gz,zip}`
 
-**Streaming binary handler — no caching:**
-1. Resolve the upstream source from the merged entry's origin:
-   - **jasp-repo package:** `https://repo.jasp-stats.org/{version}/{r_version}/{os}/{arch}/{filename}`
-   - **CRAN/RSPM package:** `{base_url}/bin/{binary_path}/{filename}`
-2. Fetch from upstream → **stream bytes directly to client** (server does not write to disk)
-3. Upstream 404 → return 404. R falls back to `type = "source"` and requests the
-   source tarball from the same primed endpoint.
+**Streaming binary handler (with optional caching):**
+
+1. **Check cache.** If a binary cache directory is configured (via `cache_path`
+   param or `options(jasp.repo_cache_path)`), serve from disk if present.
+2. **Try RSPM binary:** `{base_url}/bin/{binary_path}/{filename}`
+   - Success → cache raw bytes (if caching is on) → stream to client.
+3. **Fall back to jasp-repo:** reconstruct the `.tar.gz` filename from the
+   requested filename's version and fetch from
+   `https://repo.jasp-stats.org/{version}/{r_version}/{os}/{arch}/{filename}`.
+   - Success → **convert** (jasp-repo serves zstd-compressed, no-wrapper-dir
+     tarballs; must be converted to gzip `.tgz`/`.zip` with `pkgname/` wrapper
+     via libarchive) → cache converted bytes → stream to client.
+4. All sources 404 → return 404. R falls back to `type = "source"` and requests
+   the source tarball.
 
 #### `GET /primed/{session}/src/contrib/{pkg}_{ver}.tar.gz`
 
-**Streaming source handler — no caching:**
-1. Check if the package exists in a pinned source's `src/contrib`:
-   - **RSPM source:** `{base_url}/src/contrib/{filename}`
-   - **jasp-repo:** `{jasp_url}/{filename}`
-2. If not found in any pinned source, fall back to the **original source** declared
-   in the lockfile:
-   - **GitHub package:** `https://api.github.com/repos/{RemoteUsername}/{RemoteRepo}/tarball/{RemoteSha}`
-     - Attach `Authorization: Bearer {github_pat}` header if a PAT is available
-       (see `start_jasp_development(github_pat = ...)` in §3). Without a PAT the
-       unauthenticated rate limit is 60 requests/hour.
-   - **External repository:** `{Repository}/src/contrib/{filename}`
-     (if `Repository` is set in the lockfile record)
-3. Fetch from upstream → **stream bytes directly to client**
+**Streaming source handler (no disk caching for source tarballs):**
+
+Resolved by package origin — checked in this order:
+
+1. **GitHub package** (entry has `RemoteUsername` + `RemoteRepo` + `RemoteSha`/`RemoteRef`):
+   `https://api.github.com/repos/{RemoteUsername}/{RemoteRepo}/tarball/{RemoteSha}`
+   - Attaches `Authorization: Bearer {github_pat}` if a PAT is available.
+   Without a PAT the unauthenticated rate limit is 60 requests/hour.
+   - GitHub source is used **exclusively** — no fallback to pinned sources.
+2. **External repository** (entry has a `Repository` URL):
+   `{Repository}/src/contrib/{filename}`
+3. **CRAN package** (all others — RSPM/jasp-repo origin, or no origin metadata):
+   - First: `{rspm_base_url}/src/contrib/{filename}`
+   - Fallback: `https://cloud.r-project.org/src/contrib/{filename}`
 4. All sources fail → 404 with descriptive error.
+
+> **Note:** jasp-repo does not serve source tarballs. jasp-repo packages that end
+> up in `source_only` (version mismatch with the binary index) will be tried as
+> CRAN packages (step 3) and likely 404. For now, lockfiles should pin jasp-repo
+> packages to a version that exists in the jasp-repo binary directory.
 
 #### `DELETE /primed/{session}`
 
@@ -248,63 +285,61 @@ avoid session accumulation.
 
 ```r
 start_jasp_development <- function(
-    config_url = NULL,   # defaults to config_url in cached repos.json
-    os         = NULL,   # auto-detected
-    arch       = NULL,   # auto-detected
-    r_version  = NULL,   # auto-detected
-    distro     = NULL,   # Linux only (e.g. "noble"); ignored on macOS/Windows
-    github_pat = NULL,   # falls back to GITHUB_PAT / GITHUB_TOKEN env vars
-    port       = 8765
+    update_lockfile = FALSE,
+    library         = "./build_lib",
+    port            = 8765L,
+    config_url      = NULL,   # defaults to repos.json bundled in the package
+    github_pat      = NULL    # falls back to GITHUB_PAT / GITHUB_TOKEN env vars
 )
 ```
 
-1. Resolve `github_pat`: use the param, else `Sys.getenv("GITHUB_PAT")`, else
-   `Sys.getenv("GITHUB_TOKEN")`. Store for use by the source fallback handler.
-2. Fetch `repos.json`
-3. Pre-merge PACKAGES for `latest`
-4. Start `httpuv` server
-5. Set `options(jasp.local_repo = "http://localhost:8765")`
-6. Register cleanup on session exit (server dies with the R process)
+1. Create an isolated build library at `library` (exported as `JASP_PKG_LIBRARY` env var).
+2. Call `ensure_repo_server()` — if a server isn't already running, spawn one in
+   a **background R process** (so the event loop doesn't block the main session).
+3. Set `options(repos = c(CRAN = "http://localhost:8765/latest"))`.
+4. Optionally run `updateLockfile("./")` if `update_lockfile = TRUE`.
 
 ### `stop_jasp_development()`
 
-Kill the server.
+Kill the background server process.
 
 ### `updateLockfile()`
 
 ```r
-updateLockfile <- function(moduledir, version = "latest")
+updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE,
+                           version = "latest")
 ```
 
-1. `pkgdepends` resolves against `http://localhost:8765/{version}`
-2. Injects `JASP.RepoVersion` into lockfile
-3. Writes `renv.lock`
+1. Ensure the server is running (auto-starts if needed).
+2. `pkgdepends` resolves against `http://localhost:8765/{version}`.
+3. Merge with any locked (JASP_LOCK) records from the existing lockfile.
+4. If `jaspModuleDependenciesOnly = TRUE`, only refresh `jasp-*` packages.
+5. Inject `JASP.RepoVersion` into lockfile.
+6. Write `renv.lock`.
 
-> **Requires the server to be running.** Call `start_jasp_development()` first,
-> or `updateLockfile()` should auto-start it if not running.
->
 > **Caveat:** until the jasp-repo publishes a real PACKAGES file (with `Depends`/
 > `Imports` fields), dependency resolution for jasp-internal packages may be
 > incomplete — the directory-listing-derived PACKAGES carries name + version only.
 > For now, modules should declare all their jasp dependencies explicitly.
 
-### `compile()`
+### `build()`
 
 ```r
-compile <- function(moduledir, workdir, ...)
+build <- function(moduledir = "./", update_lockfile = FALSE,
+                  build_bundle = FALSE, library = NULL)
 ```
 
-1. Read lockfile, `POST /prime`
-2. `install.packages(pkgs, lib = pkglib, repos = "http://localhost:8765/primed/{session}", type = "binary")`
-3. Install module from source
-4. macOS: `fix_mac_linking()` + codesign (unchanged)
-5. Bundle (unchanged)
-6. `DELETE /primed/{session}` (via `withr::defer()`)
-
-> **API surface note:** the existing `compile()` signature carries several params
-> (`bundleAll`, `repoName`, `localCellar`, `localizeJASPModules`, etc.) that need
-> review against this design. With caching removed, `localCellar` likely goes away.
-> Final signature TBD during Phase 2 implementation.
+1. Ensure lockfile exists (auto-create if missing, or refresh if
+   `update_lockfile = TRUE`).
+2. Read lockfile, extract `JASP.RepoVersion`.
+3. `POST /prime` with the raw lockfile JSON.
+4. Topological-sort source-only packages by dependency count.
+5. In a clean **subprocess** (`callr::r()`), run `install.packages()` with
+   `type = "binary"` pointing at `http://localhost:8765/primed/{session}`.
+   Source-only packages are installed one-at-a-time in dependency order.
+6. `DELETE /primed/{session}` (via `tryCatch(..., finally = ...)`).
+7. macOS: `fix_mac_linking()` (unchanged).
+8. Optional: create `.JASPModule` bundle via `jaspModuleBundleManager`.
 
 ---
 
