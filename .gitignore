@@ -47,3 +47,14 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# macOS
+.DS_Store
+
+# Build artifacts
+build_all_*.log
+build_lib/
+build_lib_*/
+*.JASPModule
+*_manifest.json
+jasp_dev_work_dir/
