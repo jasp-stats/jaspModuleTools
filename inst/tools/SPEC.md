@@ -230,6 +230,11 @@ falling back to source.
 
 #### `GET /primed/{session}/bin/{binary_path}/{pkg}_{ver}.{tgz,tar.gz,zip}`
 
+Some RSPM packages have a `Path:` field (e.g. `Path: Transit`) indicating the
+tarball lives in a subdirectory. R constructs URLs with that path embedded:
+`/bin/{binary_path}/Transit/pkg_ver.tgz`. The router joins all segments after
+`contrib/{r_version}/` to reconstruct the full relative path.
+
 **Streaming binary handler (with optional caching):**
 
 1. **Check cache.** If a binary cache directory is configured (via `cache_path`
@@ -246,6 +251,11 @@ falling back to source.
    the source tarball.
 
 #### `GET /primed/{session}/src/contrib/{pkg}_{ver}.tar.gz`
+
+Supports CRAN `Path:` subdirectories (e.g. `Transit/Rcpp_1.1.1-1.tar.gz`).
+The router joins all segments after `src/contrib/` into the full filename,
+and `pkg_name_from_filename()` calls `basename()` to strip the directory
+prefix during package lookup.
 
 **Streaming source handler (no disk caching for source tarballs):**
 
@@ -312,6 +322,11 @@ updateLockfile <- function(moduledir, jaspModuleDependenciesOnly = FALSE,
 
 1. Ensure the server is running (auto-starts if needed).
 2. `pkgdepends` resolves against `http://localhost:8765/{version}`.
+   Resolution uses a **fresh metadata cache** (`metadata_cache_dir =
+   tempfile()`, `metadata_update_after = 0s`) to prevent stale pkgcache
+   data from leaking unpinned versions (e.g. rvg 0.4.2 from a previous
+   default-CRAN resolution). `options(repos)` is nullified; `cran_mirror`
+   and `use_bioconductor=FALSE` lock resolution to the pinned snapshot.
 3. Merge with any locked (JASP_LOCK) records from the existing lockfile.
 4. If `jaspModuleDependenciesOnly = TRUE`, only refresh `jasp-*` packages.
 5. Inject `JASP.RepoVersion` into lockfile.
@@ -333,7 +348,9 @@ build <- function(moduledir = "./", update_lockfile = FALSE,
    `update_lockfile = TRUE`).
 2. Read lockfile, extract `JASP.RepoVersion`.
 3. `POST /prime` with the raw lockfile JSON.
-4. Topological-sort source-only packages by dependency count.
+4. **Topological sort** (Kahn's algorithm) of source-only packages by their
+   source-only dependency counts, so each package's source deps are installed
+   before it. If a cycle is detected, falls back to the original order.
 5. In a clean **subprocess** (`callr::r()`), run `install.packages()` with
    `type = "binary"` pointing at `http://localhost:8765/primed/{session}`.
    Source-only packages are installed one-at-a-time in dependency order.

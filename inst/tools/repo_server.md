@@ -241,8 +241,8 @@ Submits a lockfile; the server classifies packages and creates a scoped session.
 
 | Method | Path | Behavior |
 |--------|------|----------|
-| `GET` | `/primed/{session}/bin/{binary_path}/{pkg}_{ver}.{tgz,tar.gz,zip}` | Stream binary from upstream; 404 → R falls back to source |
-| `GET` | `/primed/{session}/src/contrib/{pkg}_{ver}.tar.gz` | Stream source from upstream |
+| `GET` | `/primed/{session}/bin/{binary_path}/{pkg}_{ver}.{tgz,tar.gz,zip}` | Stream binary from upstream; 404 → R falls back to source. Supports `Path:` subdirectories via segment joining after `contrib/{r_version}/`. |
+| `GET` | `/primed/{session}/src/contrib/{pkg}_{ver}.tar.gz` | Stream source from upstream. Supports `Path:` subdirectories (e.g. `Transit/Rcpp_1.1.1-1.tar.gz`) — router joins all segments after `src/contrib/`; `pkg_name_from_filename()` uses `basename()` to extract package name. |
 
 #### `DELETE /primed/{session}`
 
@@ -278,6 +278,13 @@ flowchart TD
     Versioned -- Yes --> VP["resp_version_packages()"]
     Versioned -- No --> NF["404 Not Found"]
 ```
+
+**CRAN `Path:` subdirectory handling.** Some packages have a `Path:` field in
+RSPM PACKAGES (e.g. `Rcpp 1.1.1-1` → `Path: Transit`). R constructs URLs with
+the subdirectory embedded. The primed router handles this by joining all
+segments after the known directory structure (`src/contrib/` for source,
+`contrib/{r_version}/` for binaries) into the full filename. `pkg_name_from_filename()`
+strips the path with `basename()` before extracting the package name.
 
 ### 5.2 Prime + install sequence
 
