@@ -19,6 +19,7 @@ Imports:
     withr
 Remotes:
     jasp-stats/jaspModuleBundleManager,
+    rstudio/renv@44b3f47219d103b866c44fcff61e3d81e1b6cb9f
 RoxygenNote: 7.3.3
 Suggests: 
     testthat (>= 3.0.0)
