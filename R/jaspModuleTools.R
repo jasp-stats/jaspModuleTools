@@ -141,7 +141,7 @@ compile <- function(moduledir, workdir, resultdir='./', createBundle=TRUE, bundl
 
   includeInManifest=c(includeInManifest, jaspVersion=buildforJaspVersion)
   print(includeInManifest)
-  if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir, bundleAll, mustPackage=notGathered, includeInManifest, repoNames=c(repoName))
+  if(createBundle) jaspModuleBundleManager::createJaspModuleBundle(pkglib, resultdir = resultdir, packageAll = bundleAll, mustPackage=notGathered, includeInManifest=includeInManifest, repoNames=c(repoName))
   if(deleteLibrary) unlink(pkglib, recursive = TRUE)
 }
 
